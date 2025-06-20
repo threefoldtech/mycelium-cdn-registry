@@ -1,6 +1,6 @@
 use deadpool_postgres::{ManagerConfig, PoolConfig, RecyclingMethod, Runtime};
 use tokio_postgres::NoTls;
-use tracing::info;
+use tracing::{Level, info};
 
 /// DB allows operations on a (remote) postgres database server
 #[derive(Clone)]
@@ -52,7 +52,7 @@ impl DB {
     }
 
     /// Load the blob data of a blob identified by `hash`
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, level = Level::DEBUG)]
     pub async fn load_blob(
         &self,
         hash: [u8; 32],
@@ -70,6 +70,23 @@ impl DB {
         } else {
             None
         })
+    }
+
+    /// Save a blob under it's associated hash.
+    #[tracing::instrument(skip_all, level = Level::DEBUG)]
+    pub async fn store_blob(
+        &self,
+        hash: [u8; 32],
+        blob: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let client = self.pool.get().await?;
+
+        let stmt = client.prepare("INSERT INTO blobs (hash, data, size) VALUES ($1, $2, $3) ON CONFLICT(hash) DO NOTHING").await?;
+        client
+            .execute(&stmt, &[&&hash[..], &blob, &(blob.len() as i64)])
+            .await?;
+
+        Ok(())
     }
 
     /// Runs the migrations which sets up the initial table structure.
