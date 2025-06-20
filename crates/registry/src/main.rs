@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .await?;
 
-    if let Err(err) = registry::http_listener(8080).await {
+    if let Err(err) = registry::http_listener(8080, db).await {
         panic!("Could not start registry: {err}");
     }
 

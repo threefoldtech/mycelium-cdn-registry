@@ -3,6 +3,7 @@ use tokio_postgres::NoTls;
 use tracing::info;
 
 /// DB allows operations on a (remote) postgres database server
+#[derive(Clone)]
 pub struct DB {
     pool: deadpool_postgres::Pool,
 }
@@ -94,8 +95,10 @@ impl DB {
             .execute(
                 r#"
                 CREATE INDEX IF NOT EXISTS idx_blobs_created_at ON blobs(created_at)
-            #", &[]
-        ).await?;
+            "#,
+                &[],
+            )
+            .await?;
 
         client
             .execute(
