@@ -10,15 +10,15 @@ pub struct DB {
 /// Options used to connect to the database.
 pub struct ConnectionOptions {
     /// User to authenticate with
-    user: String,
+    pub user: String,
     /// Password to authenticate with
-    password: String,
+    pub password: String,
     /// Name of the datbase to open
-    dbname: String,
+    pub db_name: String,
     /// Host of the database server
-    host: String,
+    pub host: String,
     /// Port the database server is listening on
-    port: u16,
+    pub port: u16,
 }
 
 impl DB {
@@ -28,7 +28,7 @@ impl DB {
         let mut cfg = deadpool_postgres::Config::new();
         cfg.user = Some(opts.user);
         cfg.password = Some(opts.password);
-        cfg.dbname = Some(opts.dbname);
+        cfg.dbname = Some(opts.db_name);
         cfg.host = Some(opts.host);
         cfg.port = Some(opts.port);
         cfg.manager = Some(ManagerConfig {

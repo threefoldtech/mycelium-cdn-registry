@@ -1,7 +1,7 @@
 use axum::{Router, extract::Path, http::StatusCode, routing::get};
 use tracing::{Level, debug};
 
-mod postgres;
+pub mod postgres;
 
 /// Lenght of a hex encoded hash.
 const HEX_HASH_LEN: usize = 64;
