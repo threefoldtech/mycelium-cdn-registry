@@ -50,6 +50,27 @@ impl DB {
         Ok(db)
     }
 
+    /// Load the blob data of a blob identified by `hash`
+    #[tracing::instrument(skip_all)]
+    pub async fn load_blob(
+        &self,
+        hash: [u8; 32],
+    ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
+        let client = self.pool.get().await?;
+
+        let stmt = client
+            .prepare("SELECT data FROM blobs WHERE hash = $1")
+            .await?;
+        let rows = client.query(&stmt, &[&&hash[..]]).await?;
+
+        Ok(if let Some(row) = rows.first() {
+            let data: Vec<u8> = row.get(0);
+            Some(data)
+        } else {
+            None
+        })
+    }
+
     /// Runs the migrations which sets up the initial table structure.
     #[tracing::instrument(skip_all)]
     async fn migrate_v1(&self) -> Result<(), Box<dyn std::error::Error>> {
