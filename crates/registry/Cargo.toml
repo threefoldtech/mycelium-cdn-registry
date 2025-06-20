@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 axum = "0.8.4"
 clap = { version = "4.5.40", features = ["derive"] }
+deadpool-postgres = "0.14.1"
 faster-hex = "0.10.0"
 opentelemetry = "0.30.0"
 opentelemetry-stdout = "0.30.0"
