@@ -76,7 +76,7 @@ impl DB {
     #[tracing::instrument(skip_all, level = Level::DEBUG)]
     pub async fn store_blob(
         &self,
-        hash: [u8; 32],
+        hash: &[u8; 32],
         blob: &[u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
         let client = self.pool.get().await?;
@@ -117,24 +117,24 @@ impl DB {
             )
             .await?;
 
-        client
-            .execute(
-                r#"
-            CREATE TABLE IF NOT EXISTS blob_access_stats (
-                hash BYTEA REFERENCES blobs(hash) ON DELETE CASCADE,
-                access_count BIGINT DEFAULT 0,
-                last_accessed TIMESTAMP WITH TIME ZONE,
-                PRIMARY KEY (hash)
-            )
-            "#,
-                &[],
-            )
-            .await?;
-
-        client.execute(
-            r#"
-                CREATE INDEX IF NOT EXISTS idx_blobs_last_accessed_at ON blob_access_stats(last_accessed)
-            "#, &[]).await?;
+        // client
+        //     .execute(
+        //         r#"
+        //     CREATE TABLE IF NOT EXISTS blob_access_stats (
+        //         hash BYTEA REFERENCES blobs(hash) ON DELETE CASCADE,
+        //         access_count BIGINT DEFAULT 0,
+        //         last_accessed TIMESTAMP WITH TIME ZONE,
+        //         PRIMARY KEY (hash)
+        //     )
+        //     "#,
+        //         &[],
+        //     )
+        //     .await?;
+        //
+        // client.execute(
+        //     r#"
+        //         CREATE INDEX IF NOT EXISTS idx_blobs_last_accessed_at ON blob_access_stats(last_accessed)
+        //     "#, &[]).await?;
 
         Ok(())
     }

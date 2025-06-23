@@ -1,8 +1,8 @@
 use axum::{
     Router,
-    extract::{Path, State},
+    extract::{Multipart, Path, State},
     http::StatusCode,
-    routing::get,
+    routing::{get, post},
 };
 use tracing::{Level, debug, error};
 
@@ -28,7 +28,9 @@ struct AppState {
 pub async fn http_listener(port: u16, db: DB) -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState { db };
 
-    let api_router = Router::new().route("/metadata/{hash}", get(load_meta));
+    let api_router = Router::new()
+        .route("/metadata/{hash}", get(load_meta))
+        .route("/metadata", post(save_meta));
 
     let app = Router::new().nest("/api/v1", api_router).with_state(state);
 
@@ -65,4 +67,42 @@ async fn load_meta(
     } else {
         Err(StatusCode::NOT_FOUND)
     }
+}
+
+/// Handler to save a new binary data blob.
+#[tracing::instrument(skip_all, level = Level::DEBUG)]
+async fn save_meta(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<(), StatusCode> {
+    let content = if let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?
+    {
+        if let Some(key) = field.name() {
+            if key == "data" {
+                field.bytes().await.map_err(|_| StatusCode::BAD_REQUEST)?
+            } else {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+        } else {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    } else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+
+    let key = blake3::hash(&content);
+
+    state
+        .db
+        .store_blob(key.as_bytes(), &content)
+        .await
+        .map_err(|err| {
+            error!(err, "Failed to store blob content");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(())
 }
