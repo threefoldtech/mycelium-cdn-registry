@@ -1,8 +1,8 @@
 use std::{
-    fs::FileType,
-    path::{Path, PathBuf},
+    fs::{File, FileType, OpenOptions}, io::Read, path::{Path, PathBuf}
 };
 
+use aes_gcm::{aead::Aead, AeadInPlace, KeyInit};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -60,6 +60,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Encrypt, chunk, and upload the chunks
 fn upload_file(file: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let mut file = File::open(file)?;
+    let mut content = vec![];
+    file.read_to_end(&mut content)?;
+
+    let orig_hash = blake3::hash(&content);
+
+    // TODO: Compress?
+    
+    let encryptor = aes_gcm::Aes256Gcm::new((&orig_hash.as_bytes()[..]).into());
+    // TODO: generate random nonce
+    let nonce = [0,1,2,3,4,5,6,7,8,9,10,11];
+    let encrypted_content = encryptor.encrypt(&nonce.into(), content.as_slice())?;
+
+    // TODO: Chunk 
     todo!();
 }
 
