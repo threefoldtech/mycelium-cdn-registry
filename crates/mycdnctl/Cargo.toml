@@ -7,3 +7,5 @@ edition = "2024"
 aes-gcm = "0.10.3"
 blake3 = "1.8.2"
 clap = { version = "4.5.40", features = ["derive"] }
+rand = "0.9.1"
+reed-solomon-erasure = { version = "6.0.0" }
