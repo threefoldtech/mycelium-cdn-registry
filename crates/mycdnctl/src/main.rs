@@ -7,12 +7,19 @@ use std::{
 use aes_gcm::{KeyInit, aead::Aead};
 use clap::{Parser, Subcommand};
 use rand::random;
+use reed_solomon_erasure::galois_16::ReedSolomon;
 
+use crate::config::Config;
+
+/// Module for config file
+mod config;
 /// Module to work with 0-DB
 mod zdb;
 
-// The maximum unencrypted size of one chunk of content
+/// The maximum unencrypted size of one chunk of content
 const MAX_CHUNK_SIZE: u64 = 5 << 20; // 5 MiB
+/// The default configuration file path
+const DEFAULT_CONFIG_FILE: &str = "config.toml";
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -39,8 +46,10 @@ enum Command {
         name: Option<String>,
         /// The size of chunks to generate when a file is uploaded which is larger than this
         /// object.
-        #[arg(short, long, default_value_t = MAX_CHUNK_SIZE, value_parser = clap::value_parser!(u64).range(1<<20..5<<20))]
+        #[arg(long, default_value_t = MAX_CHUNK_SIZE, value_parser = clap::value_parser!(u64).range(1<<20..5<<20))]
         chunk_size: u64,
+        #[arg(short, long, default_value = DEFAULT_CONFIG_FILE)]
+        config: PathBuf,
     },
 }
 
@@ -53,6 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             mime,
             name,
             chunk_size,
+            config,
         } => {
             if !object.exists() {
                 eprintln!("{} does not exist", object.display());
@@ -65,8 +75,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
 
+            let mut config_file = File::open(config)?;
+            let mut toml_str = String::new();
+            config_file.read_to_string(&mut toml_str)?;
+            let config = toml::from_str(&toml_str)?;
+
             let meta = if ft.is_file() {
-                upload_file(&object, chunk_size)?
+                upload_file(&object, chunk_size, config)?
             } else {
                 upload_dir(&object)?
             };
@@ -77,7 +92,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Encrypt, chunk, and upload the chunks
-fn upload_file(file: &Path, chunk_size: u64) -> Result<(), Box<dyn std::error::Error>> {
+fn upload_file(
+    file: &Path,
+    chunk_size: u64,
+    config: Config,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::open(file)?;
     let mut content = vec![];
     file.read_to_end(&mut content)?;
@@ -97,12 +116,37 @@ fn upload_file(file: &Path, chunk_size: u64) -> Result<(), Box<dyn std::error::E
     for chunk in chunks {
         let encryptor = aes_gcm::Aes256Gcm::new((&orig_hash.as_bytes()[..]).into());
         let nonce: [u8; 12] = random();
-        let ciphertext = encryptor
+        let mut ciphertext = encryptor
             .encrypt(&nonce.into(), chunk)
             .map_err(|_| "Encryption failed")?;
 
+        // pkcs7 extend data
+        let mut padding = ciphertext.len() % config.required_shards as usize;
+        if padding == 0 {
+            // FIXME: padding could be bigger than 255
+            padding = config.required_shards as usize;
+        }
+
+        ciphertext.extend(std::iter::repeat_n(padding as u8, padding));
+
         // Now we can do encoding of the chunk into smaller chunks
         //TODO:
+        let encoder = ReedSolomon::new(
+            config.required_shards as usize,
+            config.zdbs.len() - config.required_shards as usize,
+        )?;
+
+        // First construct placeholders
+        let mut shards: Vec<Vec<u8>> = vec![Vec::new(); config.zdbs.len()];
+
+        // We already padded ciphetext so its length is a multiple of required_shards.
+        let shard_size = ciphertext.len() / config.required_shards as usize;
+
+        for i in 0..config.required_shards as usize {
+            shards[i] = ciphertext[i * shard_size..(i + 1) * shard_size].to_vec();
+        }
+
+        encoder.encode(&mut shards)?;
     }
 
     // TODO: upload encryped chunks
