@@ -1,12 +1,15 @@
 use std::{
-    fs::{File, FileType, OpenOptions},
+    fs::File,
     io::Read,
     path::{Path, PathBuf},
 };
 
-use aes_gcm::{AeadInPlace, KeyInit, aead::Aead};
+use aes_gcm::{KeyInit, aead::Aead};
 use clap::{Parser, Subcommand};
 use rand::random;
+
+/// Module to work with 0-DB
+mod zdb;
 
 // The maximum unencrypted size of one chunk of content
 const MAX_CHUNK_SIZE: u64 = 5 << 20; // 5 MiB
