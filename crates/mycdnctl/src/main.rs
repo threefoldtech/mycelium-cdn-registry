@@ -47,7 +47,7 @@ enum Command {
         name: Option<String>,
         /// The size of chunks to generate when a file is uploaded which is larger than this
         /// object.
-        #[arg(long, default_value_t = MAX_CHUNK_SIZE, value_parser = clap::value_parser!(u64).range(1<<20..5<<20))]
+        #[arg(long, default_value_t = MAX_CHUNK_SIZE, value_parser = clap::value_parser!(u64).range(1<<20..=5<<20))]
         chunk_size: u64,
         #[arg(short, long, default_value = DEFAULT_CONFIG_FILE)]
         config: PathBuf,
