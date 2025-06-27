@@ -21,12 +21,10 @@ pub enum Metadata {
 pub struct File {
     /// The hash of the unencrypted file content. This is also used as encryption key.
     pub content_hash: Hash,
-    /// The hash of the content after encryption, before chunking.
-    pub encrypted_content_hash: Hash,
     /// Name of the file.
     pub name: String,
     /// Mime type of the file content.
-    pub mime: String,
+    pub mime: Option<String>,
     /// The blocks which make up the actual data of the file.
     pub blocks: Vec<Block>,
 }
@@ -34,8 +32,11 @@ pub struct File {
 /// Metadata about a single directory.
 #[derive(Deserialize, Serialize)]
 pub struct Directory {
-    /// A list of file hashes.
-    pub files: Vec<FileMetaHash>,
+    /// A list of file hashes. This also includes an optional hash in case the file metadata is
+    /// encrypted. In this case, the first hash is the hash of the encrypted content (it's key in
+    /// the registry), and the second hash is the hash of the unencrypted content, which is also
+    /// the encryption key.
+    pub files: Vec<(FileMetaHash, Option<Hash>)>,
     /// Name of the directory.
     pub name: String,
 }
@@ -48,6 +49,10 @@ pub struct Block {
     pub start_offset: u64,
     /// Offset in bytes the last byte in this block is placed in the file.
     pub end_offset: u64,
+    /// Hash of the block data in plaintext,
+    pub content_hash: Hash,
+    /// Hash of the block data after it's encrypted, but before encoding.
+    pub encrypted_hash: Hash,
 }
 
 /// Location information for shards in 0-DB
