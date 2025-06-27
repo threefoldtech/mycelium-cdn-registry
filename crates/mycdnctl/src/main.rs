@@ -76,6 +76,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
 
+            if !config.exists() {
+                eprintln!("Config file does not exist");
+                std::process::exit(1);
+            }
             let mut config_file = File::open(config)?;
             let mut toml_str = String::new();
             config_file.read_to_string(&mut toml_str)?;
