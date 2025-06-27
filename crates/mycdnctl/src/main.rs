@@ -7,9 +7,10 @@ use std::{
 use aes_gcm::{KeyInit, aead::Aead};
 use clap::{Parser, Subcommand};
 use rand::random;
-use reed_solomon_erasure::galois_16::ReedSolomon;
+use rayon::prelude::*;
+use reed_solomon_erasure::galois_8::ReedSolomon;
 
-use crate::config::Config;
+use crate::{config::Config, zdb::Zdb};
 
 /// Module for config file
 mod config;
@@ -81,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let config = toml::from_str(&toml_str)?;
 
             let meta = if ft.is_file() {
-                upload_file(&object, chunk_size, config)?
+                upload_file(&object, mime, chunk_size, config)?
             } else {
                 upload_dir(&object)?
             };
@@ -94,14 +95,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// Encrypt, chunk, and upload the chunks
 fn upload_file(
     file: &Path,
+    mime: Option<String>,
     chunk_size: u64,
     config: Config,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<cdn_meta::Metadata, Box<dyn std::error::Error>> {
+    let Some(name) = file.file_name() else {
+        return Err("File must have a non-empty name".into());
+    };
+    let Some(name) = name.to_str() else {
+        return Err("File name must be valid UTF-8".into());
+    };
     let mut file = File::open(file)?;
     let mut content = vec![];
     file.read_to_end(&mut content)?;
 
     let orig_hash = blake3::hash(&content);
+    let mime = mime.or_else(|| infer::get(&content).map(|t| t.mime_type().into()));
 
     // TODO: Compress?
 
@@ -113,12 +122,22 @@ fn upload_file(
         chunks.push(&content[i * chunk_size as usize..(i + 1) * chunk_size as usize]);
     }
 
-    for chunk in chunks {
-        let encryptor = aes_gcm::Aes256Gcm::new((&orig_hash.as_bytes()[..]).into());
+    let mut meta = cdn_meta::File {
+        content_hash: *orig_hash.as_bytes(),
+        name: name.to_string(),
+        mime,
+        blocks: Vec::with_capacity(chunks.len()),
+    };
+
+    for (chunk_idx, chunk) in chunks.into_iter().enumerate() {
+        let chunk_plain_hash = blake3::hash(chunk);
+        let encryptor = aes_gcm::Aes256Gcm::new((&chunk_plain_hash.as_bytes()[..]).into());
+        // TODO: Save nonce
         let nonce: [u8; 12] = random();
         let mut ciphertext = encryptor
             .encrypt(&nonce.into(), chunk)
             .map_err(|_| "Encryption failed")?;
+        let chunk_cipher_hash = blake3::hash(&ciphertext);
 
         // pkcs7 extend data
         let mut padding = ciphertext.len() % config.required_shards as usize;
@@ -137,24 +156,49 @@ fn upload_file(
         )?;
 
         // First construct placeholders
-        let mut shards: Vec<Vec<u8>> = vec![Vec::new(); config.zdbs.len()];
-
         // We already padded ciphetext so its length is a multiple of required_shards.
         let shard_size = ciphertext.len() / config.required_shards as usize;
 
-        for i in 0..config.required_shards as usize {
-            shards[i] = ciphertext[i * shard_size..(i + 1) * shard_size].to_vec();
-        }
+        let mut shards: Vec<Vec<u8>> = ciphertext.chunks_exact(shard_size).map(Vec::from).collect();
+        shards.extend(vec![
+            vec![0; shard_size];
+            config.zdbs.len() - config.required_shards as usize
+        ]);
 
         encoder.encode(&mut shards)?;
+
+        for (shard, zdb_config) in shards.iter().zip(&config.zdbs) {
+            let mut zdb = Zdb::new(
+                zdb_config.host,
+                zdb_config.port,
+                &zdb_config.namespace,
+                zdb_config.secret.as_deref(),
+            )?;
+
+            zdb.set(&chunk_cipher_hash.as_bytes()[..], shard)?;
+        }
+
+        meta.blocks.push(cdn_meta::Block {
+            shards: config
+                .zdbs
+                .iter()
+                .map(|zdb| cdn_meta::Location {
+                    host: (zdb.host, zdb.port).into(),
+                    namespace: zdb.namespace.clone(),
+                    secret: zdb.secret.clone(),
+                })
+                .collect(),
+            start_offset: chunk_idx as u64 * chunk_size,
+            end_offset: ((chunk_idx + 1) as u64 * chunk_size) - 1,
+            content_hash: *chunk_plain_hash.as_bytes(),
+            encrypted_hash: *chunk_cipher_hash.as_bytes(),
+        });
     }
 
-    // TODO: upload encryped chunks
-
-    todo!();
+    Ok(cdn_meta::Metadata::File(meta))
 }
 
 /// For every item in dir -> upload item, then create dir metadata
-fn upload_dir(dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn upload_dir(dir: &Path) -> Result<cdn_meta::Metadata, Box<dyn std::error::Error>> {
     todo!()
 }
