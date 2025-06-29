@@ -22,6 +22,10 @@ const MAX_CHUNK_SIZE: u64 = 5 << 20; // 5 MiB
 /// The default configuration file path
 const DEFAULT_CONFIG_FILE: &str = "config.toml";
 
+// TODO: Set to correct version
+/// The default URL of the registry used to upload data.
+const DEFAULT_MYCELIUM_CDN_REGISTRY: &str = "cdn.mycelium.io";
+
 #[derive(Parser)]
 #[command(version, about)]
 struct Args {
@@ -85,15 +89,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             config_file.read_to_string(&mut toml_str)?;
             let config = toml::from_str(&toml_str)?;
 
-            let meta = if ft.is_file() {
+            let metas = if ft.is_file() {
                 upload_file(&object, mime, chunk_size, config)?
             } else {
                 upload_dir(&object)?
             };
 
-            todo!();
+            let client = reqwest::blocking::Client::new();
+            for meta in metas {
+                let part = reqwest::blocking::multipart::Part::bytes(meta.to_binary()?);
+                let form = reqwest::blocking::multipart::Form::new().part("data", part);
+                client
+                    .post(format!("{DEFAULT_MYCELIUM_CDN_REGISTRY}/api/v1/metadata"))
+                    .multipart(form)
+                    .send()?;
+            }
         }
     }
+
+    Ok(())
 }
 
 /// Encrypt, chunk, and upload the chunks
@@ -102,7 +116,7 @@ fn upload_file(
     mime: Option<String>,
     chunk_size: u64,
     config: Config,
-) -> Result<cdn_meta::Metadata, Box<dyn std::error::Error>> {
+) -> Result<Vec<cdn_meta::Metadata>, Box<dyn std::error::Error>> {
     let Some(name) = file.file_name() else {
         return Err("File must have a non-empty name".into());
     };
@@ -199,10 +213,10 @@ fn upload_file(
         });
     }
 
-    Ok(cdn_meta::Metadata::File(meta))
+    Ok(vec![cdn_meta::Metadata::File(meta)])
 }
 
 /// For every item in dir -> upload item, then create dir metadata
-fn upload_dir(dir: &Path) -> Result<cdn_meta::Metadata, Box<dyn std::error::Error>> {
+fn upload_dir(dir: &Path) -> Result<Vec<cdn_meta::Metadata>, Box<dyn std::error::Error>> {
     todo!()
 }
