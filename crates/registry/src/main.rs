@@ -54,14 +54,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         panic!("Could not install global tracing subscriber: {err}");
     }
 
-    let db = registry::postgres::DB::new(ConnectionOptions {
-        user: args.db_user,
-        password: args.db_password,
-        db_name: args.db_name,
-        host: args.db_host,
-        port: args.db_port,
-    })
-    .await?;
+    let db = match tokio::time::timeout(
+        tokio::time::Duration::from_secs(3),
+        registry::postgres::DB::new(ConnectionOptions {
+            user: args.db_user,
+            password: args.db_password,
+            db_name: args.db_name,
+            host: args.db_host,
+            port: args.db_port,
+        }),
+    )
+    .await
+    {
+        Ok(Ok(db)) => db,
+        Ok(Err(err)) => {
+            eprintln!("Could not connect to database: {err}");
+            std::process::exit(1);
+        }
+        Err(_) => {
+            eprintln!("Could not connect to database within 3 seconds - connection timed out");
+            std::process::exit(1);
+        }
+    };
 
     if let Err(err) = registry::http_listener(8080, db).await {
         panic!("Could not start registry: {err}");
