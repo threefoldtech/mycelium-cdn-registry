@@ -13,12 +13,11 @@ impl Zdb {
     /// Create a new 0-db and connect to it. This connects to the provided namespace and
     /// authenticates using the provided secret, if needed.
     pub fn new(
-        host: IpAddr,
-        port: u16,
+        host: SocketAddr,
         namespace: &str,
         secret: Option<&str>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let client = redis::Client::open((host.to_string(), port))?;
+        let client = redis::Client::open(host.to_string())?;
 
         // let ci = ConnectionInfo {
         //     addr: ConnectionAddr::Tcp(host.to_string(), port),

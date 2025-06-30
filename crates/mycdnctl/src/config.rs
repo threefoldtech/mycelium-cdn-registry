@@ -1,4 +1,4 @@
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
@@ -15,8 +15,7 @@ pub struct Config {
 /// Connection info for a 0-db backend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Zdb {
-    pub host: IpAddr,
-    pub port: u16,
+    pub host: SocketAddr,
     pub namespace: String,
     pub secret: Option<String>,
 }

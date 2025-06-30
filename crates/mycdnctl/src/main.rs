@@ -202,7 +202,6 @@ fn upload_file(
         for (shard, zdb_config) in shards.iter().zip(&config.zdbs) {
             let mut zdb = Zdb::new(
                 zdb_config.host,
-                zdb_config.port,
                 &zdb_config.namespace,
                 if include_paswords {
                     zdb_config.secret.as_deref()
@@ -219,7 +218,7 @@ fn upload_file(
                 .zdbs
                 .iter()
                 .map(|zdb| cdn_meta::Location {
-                    host: (zdb.host, zdb.port).into(),
+                    host: zdb.host,
                     namespace: zdb.namespace.clone(),
                     secret: zdb.secret.clone(),
                 })
