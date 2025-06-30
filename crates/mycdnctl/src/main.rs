@@ -151,7 +151,9 @@ fn upload_file(
     // object regardless.
     let mut chunks = Vec::with_capacity(content.len().div_ceil(chunk_size as usize));
     for i in 0..chunks.capacity() {
-        chunks.push(&content[i * chunk_size as usize..(i + 1) * chunk_size as usize]);
+        chunks.push(
+            &content[i * chunk_size as usize..((i + 1) * chunk_size as usize).min(content.len())],
+        );
     }
 
     let mut meta = cdn_meta::File {
