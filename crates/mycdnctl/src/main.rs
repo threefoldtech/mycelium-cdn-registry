@@ -55,6 +55,12 @@ enum Command {
         chunk_size: u64,
         #[arg(short, long, default_value = DEFAULT_CONFIG_FILE)]
         config: PathBuf,
+        /// Whether to inlcude the passwords for the 0-db namespaces or not. If this is not the
+        /// case, the 0-db namespaces must be PUBLIC for users to be able to download chunks. Note
+        /// that setting this will essentially give everyone who can download the metadata access
+        /// to your passwords.
+        #[arg(long, default_value_t = false)]
+        include_password: bool,
     },
 }
 
@@ -68,6 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             name,
             chunk_size,
             config,
+            include_password,
         } => {
             if !object.exists() {
                 eprintln!("{} does not exist", object.display());
@@ -90,19 +97,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let config = toml::from_str(&toml_str)?;
 
             let metas = if ft.is_file() {
-                upload_file(&object, mime, chunk_size, config)?
+                upload_file(&object, mime, chunk_size, config, include_password)?
             } else {
                 upload_dir(&object)?
             };
 
             let client = reqwest::blocking::Client::new();
             for meta in metas {
-                let part = reqwest::blocking::multipart::Part::bytes(meta.to_binary()?);
+                let bin_meta = meta.to_binary()?;
+                let hash = blake3::hash(&bin_meta);
+                let part = reqwest::blocking::multipart::Part::bytes(bin_meta);
                 let form = reqwest::blocking::multipart::Form::new().part("data", part);
                 client
                     .post(format!("{DEFAULT_MYCELIUM_CDN_REGISTRY}/api/v1/metadata"))
                     .multipart(form)
                     .send()?;
+
+                println!("File {} saved. Hash: {hash}", object.display());
             }
         }
     }
@@ -116,6 +127,7 @@ fn upload_file(
     mime: Option<String>,
     chunk_size: u64,
     config: Config,
+    include_paswords: bool,
 ) -> Result<Vec<cdn_meta::Metadata>, Box<dyn std::error::Error>> {
     let Some(name) = file.file_name() else {
         return Err("File must have a non-empty name".into());
@@ -190,7 +202,11 @@ fn upload_file(
                 zdb_config.host,
                 zdb_config.port,
                 &zdb_config.namespace,
-                zdb_config.secret.as_deref(),
+                if include_paswords {
+                    zdb_config.secret.as_deref()
+                } else {
+                    None
+                },
             )?;
 
             zdb.set(&chunk_cipher_hash.as_bytes()[..], shard)?;
