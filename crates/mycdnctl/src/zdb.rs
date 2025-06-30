@@ -17,7 +17,7 @@ impl Zdb {
         namespace: &str,
         secret: Option<&str>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let client = redis::Client::open(format!("redis://{}", host.to_string()))?;
+        let client = redis::Client::open(format!("redis://{}", host))?;
 
         // let ci = ConnectionInfo {
         //     addr: ConnectionAddr::Tcp(host.to_string(), port),
