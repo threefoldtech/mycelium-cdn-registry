@@ -129,7 +129,7 @@ fn upload_file(
     mime: Option<String>,
     chunk_size: u64,
     config: Config,
-    include_paswords: bool,
+    include_passwords: bool,
 ) -> Result<Vec<cdn_meta::Metadata>, Box<dyn std::error::Error>> {
     let Some(name) = file.file_name() else {
         return Err("File must have a non-empty name".into());
@@ -205,11 +205,7 @@ fn upload_file(
             let mut zdb = Zdb::new(
                 zdb_config.host,
                 &zdb_config.namespace,
-                if include_paswords {
-                    zdb_config.secret.as_deref()
-                } else {
-                    None
-                },
+                zdb_config.secret.as_deref(),
             )?;
 
             zdb.set(&chunk_cipher_hash.as_bytes()[..], shard)?;
@@ -222,7 +218,11 @@ fn upload_file(
                 .map(|zdb| cdn_meta::Location {
                     host: zdb.host,
                     namespace: zdb.namespace.clone(),
-                    secret: zdb.secret.clone(),
+                    secret: if include_passwords {
+                        zdb.secret.clone()
+                    } else {
+                        None
+                    },
                 })
                 .collect(),
             start_offset: chunk_idx as u64 * chunk_size,
