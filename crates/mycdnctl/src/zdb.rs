@@ -34,10 +34,10 @@ impl Zdb {
             let mut challenge = redis::cmd("AUTH")
                 .arg("SECURE")
                 .arg("CHALLENGE")
-                .query::<Vec<u8>>(&mut con)?;
+                .query::<String>(&mut con)?;
             // ":" -> ASCII/UTF-8 value 58
-            challenge.push(58);
-            challenge.extend(secret.as_bytes());
+            challenge.push(':');
+            challenge.push_str(secret);
             let mut hasher = Sha1::new();
             hasher.update(challenge);
             Some(hasher.finalize().into())
@@ -48,7 +48,7 @@ impl Zdb {
         let mut ns_cmd = redis::cmd("SELECT");
         ns_cmd.arg(namespace);
         if let Some(ss) = secure_secret {
-            ns_cmd.arg("SECURE").arg(&ss);
+            ns_cmd.arg("SECURE").arg(faster_hex::hex_string(&ss));
         }
         ns_cmd.query::<()>(&mut con)?;
 
