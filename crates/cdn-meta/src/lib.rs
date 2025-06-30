@@ -2,6 +2,12 @@ use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
 
+/// Magic bytes prepended in front of the metadata.
+pub const METADATA_MAGIC: [u8; 4] = *b"MCDN";
+
+/// Version of the metadata format in use.
+pub const VERSION: u8 = 1;
+
 /// Hashes as used in the definitions.
 pub type Hash = [u8; 32];
 /// The type used to refer to a hash which is file metadata.
@@ -21,14 +27,29 @@ impl Metadata {
         let config = bincode::config::standard()
             .with_big_endian()
             .with_fixed_int_encoding();
-        Ok(bincode::encode_to_vec(self, config)?)
+        let encoded = bincode::encode_to_vec(self, config)?;
+        let mut out = Vec::with_capacity(encoded.len() + 5);
+        out.extend(&METADATA_MAGIC);
+        out.push(VERSION);
+        out.extend(encoded);
+        Ok(out)
     }
 
     pub fn from_binary(input: &[u8]) -> Result<(Self, usize), Box<dyn std::error::Error>> {
+        if input.len() < 5 {
+            return Err("Input too short to be valid data".into());
+        }
+        if input[..4] != METADATA_MAGIC {
+            return Err("Invalid input magic".into());
+        }
+        if input[4] != VERSION {
+            return Err("Invalid metadata version".into());
+        }
+
         let config = bincode::config::standard()
             .with_big_endian()
             .with_fixed_int_encoding();
-        Ok(bincode::decode_from_slice(input, config)?)
+        Ok(bincode::decode_from_slice(&input[5..], config)?)
     }
 }
 
