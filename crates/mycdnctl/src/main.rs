@@ -111,7 +111,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let hash = blake3::hash(&bin_meta);
                 let part = reqwest::blocking::multipart::Part::bytes(bin_meta);
                 let form = reqwest::blocking::multipart::Form::new().part("data", part);
-                let url = args.registry.clone().set_path("/api/v1/metadata");
+                let mut url = args.registry.clone();
+                url.set_path("/api/v1/metadata");
                 client.post(url).multipart(form).send()?;
 
                 println!("File {} saved. Hash: {hash}", object.display());
