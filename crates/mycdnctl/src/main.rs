@@ -9,6 +9,7 @@ use clap::{Parser, Subcommand};
 use rand::random;
 use rayon::prelude::*;
 use reed_solomon_erasure::galois_8::ReedSolomon;
+use reqwest::Url;
 
 use crate::{config::Config, zdb::Zdb};
 
@@ -24,13 +25,15 @@ const DEFAULT_CONFIG_FILE: &str = "config.toml";
 
 // TODO: Set to correct version
 /// The default URL of the registry used to upload data.
-const DEFAULT_MYCELIUM_CDN_REGISTRY: &str = "cdn.mycelium.io";
+const DEFAULT_MYCELIUM_CDN_REGISTRY: &str = "https://cdn.mycelium.io";
 
 #[derive(Parser)]
 #[command(version, about)]
 struct Args {
     #[command(subcommand)]
     command: Command,
+    #[arg( short, long, default_value = DEFAULT_MYCELIUM_CDN_REGISTRY)]
+    registry: Url,
 }
 
 #[derive(Clone, Subcommand)]
@@ -108,10 +111,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let hash = blake3::hash(&bin_meta);
                 let part = reqwest::blocking::multipart::Part::bytes(bin_meta);
                 let form = reqwest::blocking::multipart::Form::new().part("data", part);
-                client
-                    .post(format!("{DEFAULT_MYCELIUM_CDN_REGISTRY}/api/v1/metadata"))
-                    .multipart(form)
-                    .send()?;
+                let url = args.registry.clone().set_path("/api/v1/metadata");
+                client.post(url).multipart(form).send()?;
 
                 println!("File {} saved. Hash: {hash}", object.display());
             }
