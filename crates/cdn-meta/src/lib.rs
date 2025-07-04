@@ -81,7 +81,10 @@ pub struct Directory {
 /// Info about distribution of a single block.
 #[derive(Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 pub struct Block {
+    /// Information needed to retrieve shards
     pub shards: Vec<Location>,
+    /// The minimal amount of shards needed to decode the data
+    pub required_shards: u16,
     /// Offset in bytes this block is placed in the file.
     pub start_offset: u64,
     /// Offset in bytes the last byte in this block is placed in the file.
@@ -90,6 +93,8 @@ pub struct Block {
     pub content_hash: Hash,
     /// Hash of the block data after it's encrypted, but before encoding.
     pub encrypted_hash: Hash,
+    /// The nonce used for encryption
+    pub nonce: [u8; 12],
 }
 
 /// Location information for shards in 0-DB

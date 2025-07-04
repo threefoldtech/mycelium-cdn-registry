@@ -225,10 +225,12 @@ fn upload_file(
                     },
                 })
                 .collect(),
+            required_shards: config.required_shards,
             start_offset: chunk_idx as u64 * chunk_size,
             end_offset: ((chunk_idx + 1) as u64 * chunk_size) - 1,
             content_hash: *chunk_plain_hash.as_bytes(),
             encrypted_hash: *chunk_cipher_hash.as_bytes(),
+            nonce,
         });
     }
 
