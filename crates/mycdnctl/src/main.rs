@@ -1,5 +1,5 @@
 use std::{
-    fs::File,
+    fs::{File, FileType},
     io::Read,
     path::{Path, PathBuf},
 };
@@ -100,9 +100,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let config = toml::from_str(&toml_str)?;
 
             let metas = if ft.is_file() {
-                upload_file(&object, mime, chunk_size, config, include_password)?
+                upload_file(&object, mime, chunk_size, &config, include_password)?
             } else {
-                upload_dir(&object)?
+                upload_dir(&object, chunk_size, &config, include_password)?
             };
 
             let client = reqwest::blocking::Client::new();
@@ -128,7 +128,7 @@ fn upload_file(
     file: &Path,
     mime: Option<String>,
     chunk_size: u64,
-    config: Config,
+    config: &Config,
     include_passwords: bool,
 ) -> Result<Vec<cdn_meta::Metadata>, Box<dyn std::error::Error>> {
     let Some(name) = file.file_name() else {
@@ -238,6 +238,53 @@ fn upload_file(
 }
 
 /// For every item in dir -> upload item, then create dir metadata
-fn upload_dir(dir: &Path) -> Result<Vec<cdn_meta::Metadata>, Box<dyn std::error::Error>> {
-    todo!()
+fn upload_dir(
+    dir: &Path,
+    chunk_size: u64,
+    config: &Config,
+    include_passwords: bool,
+) -> Result<Vec<cdn_meta::Metadata>, Box<dyn std::error::Error>> {
+    if !dir.exists() || !dir.is_dir() {
+        return Err(format!("{} must be a path to an existing directory", dir.display()).into());
+    }
+
+    let Some(name) = dir.file_name() else {
+        return Err("Directory name can't be empty".into());
+    };
+
+    let Some(name) = name.to_str() else {
+        return Err("File name must be valid UTF-8".into());
+    };
+
+    let mut meta = cdn_meta::Directory {
+        files: vec![],
+        name: name.to_string(),
+    };
+
+    let mut metas = vec![];
+
+    for file in std::fs::read_dir(dir)? {
+        // Check for errors when accessing the file metadata.
+        let file = file?;
+
+        if file.file_type()?.is_file() {
+            eprintln!("Upload {}", file.path().display());
+            let fm = upload_file(&file.path(), None, chunk_size, config, include_passwords)?;
+            meta.files.extend(fm.into_iter().map(|m| match m {
+                cdn_meta::Metadata::File(ref file) => {
+                    metas.push(m.clone());
+                    (file.content_hash, None)
+                }
+                cdn_meta::Metadata::Directory(_) => unreachable!(),
+            }));
+        } else {
+            eprintln!(
+                "Directory item at {} is not a regular file",
+                file.path().display()
+            );
+        }
+    }
+
+    metas.push(cdn_meta::Metadata::Directory(meta));
+    Ok(metas)
 }
