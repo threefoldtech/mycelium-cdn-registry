@@ -14,7 +14,7 @@ pub type Hash = [u8; 32];
 pub type FileMetaHash = Hash;
 
 /// A blob of metadata, bincode encoded.
-#[derive(Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(Clone, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 pub enum Metadata {
     /// The metadata represents a [`File`].
     File(File),
@@ -54,7 +54,7 @@ impl Metadata {
 }
 
 /// Metadata about a single file.
-#[derive(Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(Clone, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 pub struct File {
     /// The hash of the unencrypted file content. This is also used as encryption key.
     pub content_hash: Hash,
@@ -67,7 +67,7 @@ pub struct File {
 }
 
 /// Metadata about a single directory.
-#[derive(Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(Clone, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 pub struct Directory {
     /// A list of file hashes. This also includes an optional hash in case the file metadata is
     /// encrypted. In this case, the first hash is the hash of the encrypted content (it's key in
@@ -79,7 +79,7 @@ pub struct Directory {
 }
 
 /// Info about distribution of a single block.
-#[derive(Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(Clone, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 pub struct Block {
     /// Information needed to retrieve shards
     pub shards: Vec<Location>,
@@ -98,7 +98,7 @@ pub struct Block {
 }
 
 /// Location information for shards in 0-DB
-#[derive(Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(Clone, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 pub struct Location {
     /// 0-DB host IP address and port.
     pub host: SocketAddr,
