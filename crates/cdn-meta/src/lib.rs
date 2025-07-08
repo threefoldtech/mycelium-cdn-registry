@@ -23,6 +23,7 @@ pub enum Metadata {
 }
 
 impl Metadata {
+    /// Encode metadata to a binary format.
     pub fn to_binary(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let config = bincode::config::standard()
             .with_big_endian()
@@ -35,6 +36,7 @@ impl Metadata {
         Ok(out)
     }
 
+    /// Decode metadata from the binary format.
     pub fn from_binary(input: &[u8]) -> Result<(Self, usize), Box<dyn std::error::Error>> {
         if input.len() < 5 {
             return Err("Input too short to be valid data".into());
@@ -50,6 +52,14 @@ impl Metadata {
             .with_big_endian()
             .with_fixed_int_encoding();
         Ok(bincode::decode_from_slice(&input[5..], config)?)
+    }
+
+    /// Get the name of the object
+    pub fn name(&self) -> String {
+        match self {
+            Metadata::File(file) => file.name.clone(),
+            Metadata::Directory(dir) => dir.name.clone(),
+        }
     }
 }
 
