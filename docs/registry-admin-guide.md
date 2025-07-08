@@ -45,7 +45,8 @@ graph TD
 
 2. Build the registry service:
    ```bash
-   cargo build --release -p registry
+   cd crates/registry
+   cargo build --release
    ```
 
 3. The binary will be available at `target/release/registry`
@@ -179,12 +180,6 @@ For production deployments, it's recommended to run the registry as a systemd se
 
 The registry provides a simple HTTP API as defined in the [OpenAPI specification](../../crates/registry/openapi.yaml). The main endpoints are:
 
-```mermaid
-graph LR
-    Client -->|POST /api/v1/metadata| Registry[Registry Service]
-    Client -->|GET /api/v1/metadata/{hash}| Registry
-```
-
 - `POST /api/v1/metadata`: Upload a metadata blob
 - `GET /api/v1/metadata/{hash}`: Retrieve a metadata blob by its hash
 
@@ -214,31 +209,6 @@ For the Mycelium CDN to work properly, you need to configure wildcard DNS record
    ```
 
 2. This allows URLs like `https://[hash].cdn.mycelium.io/` to resolve to your registry server
-
-## HTTPS Configuration
-
-It's strongly recommended to configure HTTPS for the registry service:
-
-1. Obtain a wildcard SSL certificate for `*.cdn.mycelium.io`
-2. Set up a reverse proxy (e.g., Nginx, Apache, or Caddy) to handle HTTPS
-3. Configure the reverse proxy to forward requests to the registry service
-
-Example Nginx configuration:
-```nginx
-server {
-    listen 443 ssl;
-    server_name *.cdn.mycelium.io;
-    
-    ssl_certificate /path/to/wildcard.crt;
-    ssl_certificate_key /path/to/wildcard.key;
-    
-    location / {
-        proxy_pass http://localhost:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-```
 
 ## Monitoring and Logging
 

@@ -34,7 +34,8 @@ graph TD
 
 2. Build the tool:
    ```bash
-   cargo build --release -p mycdnctl
+   cd crates/mycdnctl
+   cargo build --release
    ```
 
 3. The binary will be available at `target/release/mycdnctl`
