@@ -27,6 +27,10 @@ const DEFAULT_CONFIG_FILE: &str = "config.toml";
 /// The default URL of the registry used to upload data.
 const DEFAULT_MYCELIUM_CDN_REGISTRY: &str = "https://cdn.mycelium.io";
 
+/// Encrypted binary metadata, hash of the encrypted content, and hash of the plaintext content
+/// (which is the encryption key)
+type MetaInfo = (Vec<u8>, [u8; 32], [u8; 32]);
+
 #[derive(Parser)]
 #[command(version, about)]
 struct Args {
@@ -106,16 +110,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let client = reqwest::blocking::Client::new();
-            for meta in metas {
-                let bin_meta = meta.to_binary()?;
-                let hash = blake3::hash(&bin_meta);
-                let part = reqwest::blocking::multipart::Part::bytes(bin_meta);
+            for (encrypted_blob, encrypted_hash, plaintext_hash) in metas {
+                let part = reqwest::blocking::multipart::Part::bytes(encrypted_blob);
                 let form = reqwest::blocking::multipart::Form::new().part("data", part);
                 let mut url = args.registry.clone();
                 url.set_path("/api/v1/metadata");
-                client.post(url).multipart(form).send()?;
+                client.post(url.clone()).multipart(form).send()?;
 
-                println!("File {} saved. Hash: {hash}", object.display());
+                println!(
+                    "Object {} saved. Url: {}.{url}/?key={} ",
+                    object.display(),
+                    faster_hex::hex_string(&encrypted_hash),
+                    faster_hex::hex_string(&plaintext_hash)
+                );
             }
         }
     }
@@ -130,7 +137,7 @@ fn upload_file(
     chunk_size: u64,
     config: &Config,
     include_passwords: bool,
-) -> Result<Vec<cdn_meta::Metadata>, Box<dyn std::error::Error>> {
+) -> Result<Vec<MetaInfo>, Box<dyn std::error::Error>> {
     let Some(name) = file.file_name() else {
         return Err("File must have a non-empty name".into());
     };
@@ -166,7 +173,6 @@ fn upload_file(
     for (chunk_idx, chunk) in chunks.into_iter().enumerate() {
         let chunk_plain_hash = blake3::hash(chunk);
         let encryptor = aes_gcm::Aes256Gcm::new((&chunk_plain_hash.as_bytes()[..]).into());
-        // TODO: Save nonce
         let nonce: [u8; 12] = random();
         let mut ciphertext = encryptor
             .encrypt(&nonce.into(), chunk)
@@ -234,7 +240,7 @@ fn upload_file(
         });
     }
 
-    Ok(vec![cdn_meta::Metadata::File(meta)])
+    Ok(vec![encrypt_meta(&cdn_meta::Metadata::File(meta))?])
 }
 
 /// For every item in dir -> upload item, then create dir metadata
@@ -243,7 +249,7 @@ fn upload_dir(
     chunk_size: u64,
     config: &Config,
     include_passwords: bool,
-) -> Result<Vec<cdn_meta::Metadata>, Box<dyn std::error::Error>> {
+) -> Result<Vec<MetaInfo>, Box<dyn std::error::Error>> {
     if !dir.exists() || !dir.is_dir() {
         return Err(format!("{} must be a path to an existing directory", dir.display()).into());
     }
@@ -269,14 +275,10 @@ fn upload_dir(
 
         if file.file_type()?.is_file() {
             eprintln!("Upload {}", file.path().display());
-            let fm = upload_file(&file.path(), None, chunk_size, config, include_passwords)?;
-            meta.files.extend(fm.into_iter().map(|m| match m {
-                cdn_meta::Metadata::File(ref file) => {
-                    metas.push(m.clone());
-                    (file.content_hash, None)
-                }
-                cdn_meta::Metadata::Directory(_) => unreachable!(),
-            }));
+            let mi = upload_file(&file.path(), None, chunk_size, config, include_passwords)?;
+            metas.extend(mi.iter().cloned());
+            meta.files
+                .extend(mi.into_iter().map(|(_, eh, ph)| (eh, Some(ph))));
         } else {
             eprintln!(
                 "Directory item at {} is not a regular file",
@@ -285,6 +287,24 @@ fn upload_dir(
         }
     }
 
-    metas.push(cdn_meta::Metadata::Directory(meta));
+    metas.push(encrypt_meta(&cdn_meta::Metadata::Directory(meta))?);
     Ok(metas)
+}
+
+/// Encrypts the binary blob of some metadata and returns the encrypted blob, the hash of the
+/// encrypted data (which is the key it will be stored under), and the hash of the plaintext blob
+/// (which is used as encryption key).
+fn encrypt_meta(meta: &cdn_meta::Metadata) -> Result<MetaInfo, Box<dyn std::error::Error>> {
+    let content_blob = meta.to_binary()?;
+    let content_hash = blake3::hash(&content_blob);
+
+    let encryptor = aes_gcm::Aes256Gcm::new((&content_hash.as_bytes()[..]).into());
+    let nonce: [u8; 12] = random();
+    let mut ciphertext = encryptor
+        .encrypt(&nonce.into(), content_blob.as_slice())
+        .map_err(|_| "Encryption failed")?;
+    ciphertext.extend(&nonce);
+    let cipher_hash = blake3::hash(&ciphertext);
+
+    Ok((ciphertext, cipher_hash.into(), content_hash.into()))
 }
