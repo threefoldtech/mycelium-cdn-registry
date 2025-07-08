@@ -26,9 +26,9 @@ const DEFAULT_CONFIG_FILE: &str = "config.toml";
 /// The default URL of the registry used to upload data.
 const DEFAULT_MYCELIUM_CDN_REGISTRY: &str = "https://cdn.mycelium.io";
 
-/// Encrypted binary metadata, hash of the encrypted content, and hash of the plaintext content
+/// Name, Encrypted binary metadata, hash of the encrypted content, and hash of the plaintext content
 /// (which is the encryption key)
-type MetaInfo = (Vec<u8>, [u8; 32], [u8; 32]);
+type MetaInfo = (String, Vec<u8>, [u8; 32], [u8; 32]);
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -109,7 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let client = reqwest::blocking::Client::new();
-            for (encrypted_blob, encrypted_hash, plaintext_hash) in metas {
+            for (name, encrypted_blob, encrypted_hash, plaintext_hash) in metas {
                 let part = reqwest::blocking::multipart::Part::bytes(encrypted_blob);
                 let form = reqwest::blocking::multipart::Form::new().part("data", part);
                 let mut url = args.registry.clone();
@@ -130,7 +130,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 url.set_path("/");
 
-                println!("Object {} saved. Url: {url}", object.display(),);
+                println!("Object {name} saved. Url: {url}");
             }
         }
     }
@@ -286,7 +286,7 @@ fn upload_dir(
             let mi = upload_file(&file.path(), None, chunk_size, config, include_passwords)?;
             metas.extend(mi.iter().cloned());
             meta.files
-                .extend(mi.into_iter().map(|(_, eh, ph)| (eh, Some(ph))));
+                .extend(mi.into_iter().map(|(_, _, eh, ph)| (eh, Some(ph))));
         } else {
             eprintln!(
                 "Directory item at {} is not a regular file",
@@ -314,5 +314,10 @@ fn encrypt_meta(meta: &cdn_meta::Metadata) -> Result<MetaInfo, Box<dyn std::erro
     ciphertext.extend(&nonce);
     let cipher_hash = blake3::hash(&ciphertext);
 
-    Ok((ciphertext, cipher_hash.into(), content_hash.into()))
+    Ok((
+        meta.name(),
+        ciphertext,
+        cipher_hash.into(),
+        content_hash.into(),
+    ))
 }
