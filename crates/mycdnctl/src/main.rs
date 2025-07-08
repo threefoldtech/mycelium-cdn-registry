@@ -1,5 +1,5 @@
 use std::{
-    fs::{File, FileType},
+    fs::File,
     io::Read,
     path::{Path, PathBuf},
 };
@@ -7,7 +7,6 @@ use std::{
 use aes_gcm::{KeyInit, aead::Aead};
 use clap::{Parser, Subcommand};
 use rand::random;
-use rayon::prelude::*;
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use reqwest::Url;
 
@@ -78,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Upload {
             object,
             mime,
-            name,
+            name: _,
             chunk_size,
             config,
             include_password,
@@ -117,12 +116,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 url.set_path("/api/v1/metadata");
                 client.post(url.clone()).multipart(form).send()?;
 
-                println!(
-                    "Object {} saved. Url: {}.{url}/?key={} ",
-                    object.display(),
-                    faster_hex::hex_string(&encrypted_hash),
+                url.set_query(Some(&format!(
+                    "key={}",
                     faster_hex::hex_string(&plaintext_hash)
+                )));
+
+                let host = format!(
+                    "{}.{}",
+                    faster_hex::hex_string(&encrypted_hash),
+                    url.host_str().expect("Registry URL has a host")
                 );
+                url.set_host(Some(&host))?;
+
+                url.set_path("/");
+
+                println!("Object {} saved. Url: {url}", object.display(),);
             }
         }
     }

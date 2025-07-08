@@ -1,11 +1,9 @@
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 
-use redis::{Commands, ConnectionAddr, ConnectionInfo, ProtocolVersion, RedisConnectionInfo};
 use sha1::{Digest, Sha1};
 
 /// Represents a connection to a 0-db.
 pub struct Zdb {
-    client: redis::Client,
     con: redis::Connection,
 }
 
@@ -17,17 +15,7 @@ impl Zdb {
         namespace: &str,
         secret: Option<&str>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let client = redis::Client::open(format!("redis://{}", host))?;
-
-        // let ci = ConnectionInfo {
-        //     addr: ConnectionAddr::Tcp(host.to_string(), port),
-        //     redis: RedisConnectionInfo {
-        //         db: 0,
-        //         username: None,
-        //         password: None,
-        //         protocol: ProtocolVersion::RESP3,
-        //     },
-        // };
+        let client = redis::Client::open(format!("redis://{host}"))?;
 
         let mut con = client.get_connection()?;
         let secure_secret: Option<[u8; 20]> = if let Some(secret) = secret {
@@ -52,7 +40,7 @@ impl Zdb {
         }
         ns_cmd.query::<()>(&mut con)?;
 
-        Ok(Zdb { client, con })
+        Ok(Zdb { con })
     }
 
     /// Set a value associated with a key
