@@ -129,6 +129,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 url.set_host(Some(&host))?;
 
                 url.set_path("/");
+                url.set_scheme("http")
+                    .map_err(|_| "Could not set scheme to http")?;
 
                 println!("Object {name} saved. Url: {url}");
             }
