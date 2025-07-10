@@ -22,9 +22,8 @@ const MAX_CHUNK_SIZE: u64 = 5 << 20; // 5 MiB
 /// The default configuration file path
 const DEFAULT_CONFIG_FILE: &str = "config.toml";
 
-// TODO: Set to correct version
 /// The default URL of the registry used to upload data.
-const DEFAULT_MYCELIUM_CDN_REGISTRY: &str = "https://cdn.mycelium.io";
+const DEFAULT_MYCELIUM_CDN_REGISTRY: &str = "https://cdn.mycelium.grid.tf";
 
 /// Name, Encrypted binary metadata, hash of the encrypted content, and hash of the plaintext content
 /// (which is the encryption key)
