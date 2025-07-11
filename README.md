@@ -25,9 +25,12 @@ graph TD
     CDN -->|Geo-aware loading| User
 ```
 
-## User Guide: Using mycdnctl
+## Using mycdnctl
 
-The `mycdnctl` tool allows you to upload files and directories to the Mycelium CDN. The uploaded content is split into chunks, encrypted, and distributed across multiple 0-DB instances using Reed-Solomon erasure coding for redundancy.
+The `mycdnctl` tool is the primary tool needed by users to interract with the mycelium
+CDN. This tool allows you to upload files and directories to the Mycelium CDN. The
+uploaded content is split into chunks, encrypted, and distributed across multiple
+0-DB instances using Reed-Solomon erasure coding for redundancy.
 
 ### Installation
 
