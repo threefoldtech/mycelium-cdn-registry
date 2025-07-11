@@ -1092,6 +1092,7 @@ dependencies = [
  "clap",
  "faster-hex",
  "infer",
+ "mime_guess",
  "rand",
  "rayon",
  "redis",

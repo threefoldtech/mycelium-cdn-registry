@@ -141,24 +141,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Encrypt, chunk, and upload the chunks
 fn upload_file(
-    file: &Path,
+    file_path: &Path,
     mime: Option<String>,
     chunk_size: u64,
     config: &Config,
     include_passwords: bool,
 ) -> Result<Vec<MetaInfo>, Box<dyn std::error::Error>> {
-    let Some(name) = file.file_name() else {
+    let Some(name) = file_path.file_name() else {
         return Err("File must have a non-empty name".into());
     };
     let Some(name) = name.to_str() else {
         return Err("File name must be valid UTF-8".into());
     };
-    let mut file = File::open(file)?;
+    let mut file = File::open(file_path)?;
     let mut content = vec![];
     file.read_to_end(&mut content)?;
 
     let orig_hash = blake3_16_hash(&content);
-    let mime = mime.or_else(|| infer::get(&content).map(|t| t.mime_type().into()));
+    let mime = mime
+        .or_else(|| infer::get(&content).map(|t| t.mime_type().into()))
+        .unwrap_or_else(|| {
+            mime_guess::from_path(file_path)
+                .first_or_octet_stream()
+                .to_string()
+        });
 
     // Chunk content to size. This must be done now since decryption can only happen at the
     // beginning, so decrypting a chunk created after encryption would require the whole encrypted
@@ -173,7 +179,7 @@ fn upload_file(
     let mut meta = cdn_meta::File {
         content_hash: orig_hash,
         name: name.to_string(),
-        mime,
+        mime: Some(mime),
         blocks: Vec::with_capacity(chunks.len()),
     };
 
