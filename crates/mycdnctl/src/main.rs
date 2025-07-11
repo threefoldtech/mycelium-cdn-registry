@@ -160,8 +160,6 @@ fn upload_file(
     let orig_hash = blake3_16_hash(&content);
     let mime = mime.or_else(|| infer::get(&content).map(|t| t.mime_type().into()));
 
-    // TODO: Compress?
-
     // Chunk content to size. This must be done now since decryption can only happen at the
     // beginning, so decrypting a chunk created after encryption would require the whole encrypted
     // object regardless.
@@ -198,7 +196,6 @@ fn upload_file(
         ciphertext.extend(std::iter::repeat_n(padding as u8, padding));
 
         // Now we can do encoding of the chunk into smaller chunks
-        //TODO:
         let encoder = ReedSolomon::new(
             config.required_shards as usize,
             config.zdbs.len() - config.required_shards as usize,
