@@ -27,7 +27,7 @@ const DEFAULT_MYCELIUM_CDN_REGISTRY: &str = "https://cdn.mycelium.grid.tf";
 
 /// Name, Encrypted binary metadata, hash of the encrypted content, and hash of the plaintext content
 /// (which is the encryption key)
-type MetaInfo = (String, Vec<u8>, [u8; 32], [u8; 32]);
+type MetaInfo = (String, Vec<u8>, [u8; 16], [u8; 16]);
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -157,7 +157,7 @@ fn upload_file(
     let mut content = vec![];
     file.read_to_end(&mut content)?;
 
-    let orig_hash = blake3::hash(&content);
+    let orig_hash = blake3_16_hash(&content);
     let mime = mime.or_else(|| infer::get(&content).map(|t| t.mime_type().into()));
 
     // TODO: Compress?
@@ -173,20 +173,20 @@ fn upload_file(
     }
 
     let mut meta = cdn_meta::File {
-        content_hash: *orig_hash.as_bytes(),
+        content_hash: orig_hash,
         name: name.to_string(),
         mime,
         blocks: Vec::with_capacity(chunks.len()),
     };
 
     for (chunk_idx, chunk) in chunks.into_iter().enumerate() {
-        let chunk_plain_hash = blake3::hash(chunk);
-        let encryptor = aes_gcm::Aes256Gcm::new((&chunk_plain_hash.as_bytes()[..]).into());
+        let chunk_plain_hash = blake3_16_hash(chunk);
+        let encryptor = aes_gcm::Aes128Gcm::new((&chunk_plain_hash[..]).into());
         let nonce: [u8; 12] = random();
         let mut ciphertext = encryptor
             .encrypt(&nonce.into(), chunk)
             .map_err(|_| "Encryption failed")?;
-        let chunk_cipher_hash = blake3::hash(&ciphertext);
+        let chunk_cipher_hash = blake3_16_hash(&ciphertext);
 
         // pkcs7 extend data
         let mut padding = ciphertext.len() % config.required_shards as usize;
@@ -223,7 +223,7 @@ fn upload_file(
                 zdb_config.secret.as_deref(),
             )?;
 
-            zdb.set(&chunk_cipher_hash.as_bytes()[..], shard)?;
+            zdb.set(&chunk_cipher_hash[..], shard)?;
         }
 
         meta.blocks.push(cdn_meta::Block {
@@ -243,8 +243,8 @@ fn upload_file(
             required_shards: config.required_shards,
             start_offset: chunk_idx as u64 * chunk_size,
             end_offset: ((chunk_idx + 1) as u64 * chunk_size) - 1,
-            content_hash: *chunk_plain_hash.as_bytes(),
-            encrypted_hash: *chunk_cipher_hash.as_bytes(),
+            content_hash: chunk_plain_hash,
+            encrypted_hash: chunk_cipher_hash,
             nonce,
         });
     }
@@ -305,20 +305,25 @@ fn upload_dir(
 /// (which is used as encryption key).
 fn encrypt_meta(meta: &cdn_meta::Metadata) -> Result<MetaInfo, Box<dyn std::error::Error>> {
     let content_blob = meta.to_binary()?;
-    let content_hash = blake3::hash(&content_blob);
+    let content_hash = blake3_16_hash(&content_blob);
 
-    let encryptor = aes_gcm::Aes256Gcm::new((&content_hash.as_bytes()[..]).into());
+    let encryptor = aes_gcm::Aes128Gcm::new((&content_hash[..]).into());
     let nonce: [u8; 12] = random();
     let mut ciphertext = encryptor
         .encrypt(&nonce.into(), content_blob.as_slice())
         .map_err(|_| "Encryption failed")?;
     ciphertext.extend(&nonce);
-    let cipher_hash = blake3::hash(&ciphertext);
+    let cipher_hash = blake3_16_hash(&ciphertext);
 
-    Ok((
-        meta.name(),
-        ciphertext,
-        cipher_hash.into(),
-        content_hash.into(),
-    ))
+    Ok((meta.name(), ciphertext, cipher_hash, content_hash))
+}
+
+/// Hash an input to 16 bytes of output using blake3
+fn blake3_16_hash(input: &[u8]) -> cdn_meta::Hash {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(input);
+    let mut output = [0; 16];
+    let mut output_reader = hasher.finalize_xof();
+    output_reader.fill(&mut output);
+    output
 }

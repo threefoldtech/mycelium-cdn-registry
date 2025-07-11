@@ -9,7 +9,7 @@ pub const METADATA_MAGIC: [u8; 4] = *b"MCDN";
 pub const VERSION: u8 = 1;
 
 /// Hashes as used in the definitions.
-pub type Hash = [u8; 32];
+pub type Hash = [u8; 16];
 /// The type used to refer to a hash which is file metadata.
 pub type FileMetaHash = Hash;
 
