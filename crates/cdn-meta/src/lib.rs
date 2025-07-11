@@ -51,7 +51,9 @@ impl Metadata {
         let config = bincode::config::standard()
             .with_big_endian()
             .with_fixed_int_encoding();
-        Ok(bincode::decode_from_slice(&input[5..], config)?)
+        let (m, used) = bincode::decode_from_slice(&input[5..], config)?;
+        // Add 5 for the manually verified initial metadata prefix
+        Ok((m, used + 5))
     }
 
     /// Get the name of the object
