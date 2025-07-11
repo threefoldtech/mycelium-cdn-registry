@@ -2,6 +2,10 @@
 
 This document provides a detailed technical specification of the metadata format, binary encoding, encryption, and storage architecture used in the Mycelium CDN system. It is intended for developers who need to understand the internals of the system or implement compatible clients.
 
+## Hash size
+
+For the contect of this, and related documentation, `blake3 hash` is a blake3 hash with 16 bytes of output size.
+
 ```mermaid
 graph TD
     subgraph "Metadata Structure"
@@ -14,7 +18,7 @@ graph TD
     subgraph "Encoding & Encryption"
         PlainMeta[Plaintext Metadata] --> BinEncode[Bincode Encoding]
         BinEncode --> AddMagic[Add Magic Bytes & Version]
-        AddMagic --> Encrypt[AES-256-GCM Encryption]
+        AddMagic --> Encrypt[AES-128-GCM Encryption]
         Encrypt --> EncMeta[Encrypted Metadata]
     end
 ```
@@ -138,7 +142,7 @@ flowchart LR
 
 ## Encryption
 
-The Mycelium CDN uses AES-256-GCM for encryption of both file content and metadata.
+The Mycelium CDN uses AES-128-GCM for encryption of both file content and metadata.
 
 ```mermaid
 flowchart TD
@@ -146,7 +150,7 @@ flowchart TD
         A[File Content Block] --> B[Blake3 Hash]
         B --> C[Use Hash as AES Key]
         C --> D[Generate Random Nonce]
-        D --> E[AES-256-GCM Encrypt]
+        D --> E[AES-128-GCM Encrypt]
         E --> F[Encrypted Block]
     end
     
@@ -154,7 +158,7 @@ flowchart TD
         G[Metadata Binary] --> H[Blake3 Hash]
         H --> I[Use Hash as AES Key]
         I --> J[Generate Random Nonce]
-        J --> K[AES-256-GCM Encrypt]
+        J --> K[AES-128-GCM Encrypt]
         K --> L[Append Nonce]
         L --> M[Encrypted Metadata]
     end

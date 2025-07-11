@@ -128,7 +128,7 @@ mycdnctl upload --config config.toml path/to/file.txt
 This will:
 1. Read and hash the file
 2. Split the file into chunks (default: 5 MiB)
-3. Encrypt each chunk using AES-256-GCM
+3. Encrypt each chunk using AES-128-GCM
 4. Apply Reed-Solomon erasure coding to generate shards
 5. Upload the shards to the 0-DB instances
 6. Create and encrypt metadata
@@ -227,8 +227,8 @@ Where:
 graph TD
     subgraph "Encryption Process"
         Content[Content] --> Hash[Blake3 Hash]
-        Hash --> Key[AES-256 Key]
-        Content --> AES[AES-256-GCM Encryption]
+        Hash --> Key[AES-128 Key]
+        Content --> AES[AES-128-GCM Encryption]
         Key --> AES
         Nonce[Random Nonce] --> AES
         AES --> Encrypted[Encrypted Content]

@@ -61,7 +61,7 @@ sequenceDiagram
 
 1. **Upload Process**:
    - Files are split into chunks
-   - Chunks are encrypted using AES-256-GCM
+   - Chunks are encrypted using AES-128-GCM
    - Encrypted chunks are erasure-coded using Reed-Solomon
    - Shards are distributed across multiple 0-DB instances in different geographic regions
    - Metadata is created, encrypted, and stored in the registry
