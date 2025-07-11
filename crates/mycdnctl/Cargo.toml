@@ -25,3 +25,8 @@ reqwest = { version = "0.12.20", default-features = false, features = [
 ] }
 faster-hex = "0.10.0"
 mime_guess = "2.0.5"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
