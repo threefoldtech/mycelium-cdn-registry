@@ -12,9 +12,9 @@ mod blob;
 pub mod postgres;
 
 /// Lenght of a hex encoded hash.
-const HEX_HASH_LEN: usize = 64;
+const HEX_HASH_LEN: usize = 32;
 /// Binary size of a hash.
-const HASH_LEN: usize = 32;
+const HASH_LEN: usize = 16;
 
 pub struct Server {}
 
@@ -93,16 +93,22 @@ async fn save_meta(
         return Err(StatusCode::BAD_REQUEST);
     };
 
-    let key = blake3::hash(&content);
+    let key = blake3_16_hash(&content);
 
-    state
-        .db
-        .store_blob(key.as_bytes(), &content)
-        .await
-        .map_err(|err| {
-            error!(err, "Failed to store blob content");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    state.db.store_blob(&key, &content).await.map_err(|err| {
+        error!(err, "Failed to store blob content");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(())
+}
+
+/// Hash an input to 16 bytes of output using blake3
+fn blake3_16_hash(input: &[u8]) -> [u8; 16] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(input);
+    let mut output = [0; 16];
+    let mut output_reader = hasher.finalize_xof();
+    output_reader.fill(&mut output);
+    output
 }

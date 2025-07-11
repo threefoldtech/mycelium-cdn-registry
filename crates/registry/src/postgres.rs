@@ -1,4 +1,4 @@
-use deadpool_postgres::{ManagerConfig, PoolConfig, RecyclingMethod, Runtime};
+use deadpool_postgres::{ManagerConfig, RecyclingMethod, Runtime};
 use tokio_postgres::NoTls;
 use tracing::{Level, info};
 
@@ -55,7 +55,7 @@ impl DB {
     #[tracing::instrument(skip_all, level = Level::DEBUG)]
     pub async fn load_blob(
         &self,
-        hash: [u8; 32],
+        hash: [u8; 16],
     ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
         let client = self.pool.get().await?;
 
@@ -76,7 +76,7 @@ impl DB {
     #[tracing::instrument(skip_all, level = Level::DEBUG)]
     pub async fn store_blob(
         &self,
-        hash: &[u8; 32],
+        hash: &[u8; 16],
         blob: &[u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
         let client = self.pool.get().await?;
