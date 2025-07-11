@@ -82,6 +82,8 @@ graph TD
    CREATE DATABASE mycelium_cdn_registry;
    CREATE USER mycelium WITH PASSWORD 'your-secure-password';
    GRANT ALL PRIVILEGES ON DATABASE mycelium_cdn_registry TO mycelium;
+   \c mycelium_cdn_registry
+   GRANT ALL ON SCHEMA public TO mycelium;
    ```
 
 4. Exit the PostgreSQL prompt:
@@ -135,7 +137,7 @@ For production deployments, it's recommended to run the registry as a systemd se
 
 1. Create a systemd service file:
    ```bash
-   sudo nano /etc/systemd/system/mycelium-cdn-registry.service
+   sudo vim /etc/systemd/system/mycelium-cdn-registry.service
    ```
 
 2. Add the following content:

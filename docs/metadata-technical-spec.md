@@ -165,9 +165,9 @@ flowchart TD
 File content is encrypted at the block level:
 
 1. Each block of file content is hashed using Blake3
-2. The hash is used as the encryption key for AES-256-GCM
+2. The hash is used as the encryption key for AES-128-GCM
 3. A random 12-byte nonce is generated for each block
-4. The block is encrypted using AES-256-GCM with the key and nonce
+4. The block is encrypted using AES-128-GCM with the key and nonce
 5. The encrypted block is then erasure-coded and distributed
 
 ### Metadata Encryption
@@ -176,9 +176,9 @@ Metadata is also encrypted:
 
 1. The metadata is serialized to binary format
 2. The binary blob is hashed using Blake3
-3. The hash is used as the encryption key for AES-256-GCM
+3. The hash is used as the encryption key for AES-128-GCM
 4. A random 12-byte nonce is generated
-5. The metadata is encrypted using AES-256-GCM with the key and nonce
+5. The metadata is encrypted using AES-128-GCM with the key and nonce
 6. The nonce is appended to the encrypted metadata
 7. The encrypted metadata with appended nonce is stored in the registry
 
@@ -270,7 +270,7 @@ https://[encrypted-hash].[registry-domain]/?key=[plaintext-hash]
 
 Where:
 - `[encrypted-hash]` is the hex-encoded Blake3 hash of the encrypted metadata
-- `[registry-domain]` is the domain of the registry (e.g., `cdn.mycelium.io`)
+- `[registry-domain]` is the domain of the registry (e.g., `cdn.mycelium.grid.tf`)
 - `[plaintext-hash]` is the hex-encoded Blake3 hash of the plaintext metadata, which is also the decryption key
 
 ## Client Implementation Guide
@@ -307,7 +307,7 @@ To implement a client for uploading content:
 1. **Split the file into chunks** (default: 5 MiB)
 2. **For each chunk**:
    - Hash the chunk using Blake3
-   - Encrypt the chunk using AES-256-GCM with the hash as the key
+   - Encrypt the chunk using AES-128-GCM with the hash as the key
    - Generate Reed-Solomon shards
    - Upload each shard to a different 0-DB instance
 3. **Create metadata** and upload to the registry

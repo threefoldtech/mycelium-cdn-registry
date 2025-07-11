@@ -244,9 +244,9 @@ graph TD
 
 ### Encryption
 
-- File content is encrypted using AES-256-GCM
+- File content is encrypted using AES-128-GCM
 - The encryption key is the Blake3 hash of the plaintext content
-- Metadata is also encrypted using AES-256-GCM
+- Metadata is also encrypted using AES-128-GCM
 - The encryption key for metadata is the Blake3 hash of the plaintext metadata
 
 ### Access Control
