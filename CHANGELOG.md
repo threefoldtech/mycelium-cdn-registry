@@ -13,6 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add cdn metadata definitions
 - Add registry for metadata
-- Add command line tool to upload files to 0-db backends, and metadata to registry
+- Add command line tool to upload files to Hero Redis backends, and metadata to registry
 
 [unreleased]: https://github.com/threefoldtech/mycelium-cdn-regsitry/compare/v0.1.0...HEAD

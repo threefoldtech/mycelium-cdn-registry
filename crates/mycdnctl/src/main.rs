@@ -10,12 +10,15 @@ use rand::random;
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use reqwest::Url;
 
-use crate::{config::Config, zdb::Zdb};
+use crate::{
+    config::{Config, HeroRedisAuth, ShardBackend},
+    hero_redis::{ChallengeFormat, HeroRedis},
+};
 
 /// Module for config file
 mod config;
-/// Module to work with 0-DB
-mod zdb;
+/// Module to work with Hero Redis backend
+mod hero_redis;
 
 /// The maximum unencrypted size of one chunk of content
 const MAX_CHUNK_SIZE: u64 = 5 << 20; // 5 MiB
@@ -34,36 +37,47 @@ type MetaInfo = (String, Vec<u8>, [u8; 16], [u8; 16]);
 struct Args {
     #[command(subcommand)]
     command: Command,
-    #[arg( short, long, default_value = DEFAULT_MYCELIUM_CDN_REGISTRY)]
+    #[arg(short, long, default_value = DEFAULT_MYCELIUM_CDN_REGISTRY)]
     registry: Url,
 }
 
 #[derive(Clone, Subcommand)]
 /// Available commands to manage mycelium cdn objects.
 enum Command {
-    /// Upload an object (file or directory) to 0-db's and save the metadata in the mycelium cdn
-    /// registry.
+    /// Upload an object (file or directory) to Hero Redis shard backends and save the metadata in
+    /// the mycelium cdn registry.
     Upload {
         /// The object to upload, this must be either a file or directory
         object: PathBuf,
+
         /// The mime type of the object. For directories, this is ignored. For files, if this is
         /// set, this value will be used, otherwise an attempt is made to infer the mime type from
         /// the filename/content.
         #[arg(short, long)]
         mime: Option<String>,
+
         /// Custom name of the object. If this is not set, the leaf of the path value is used.
         #[arg(short, long)]
         name: Option<String>,
+
         /// The size of chunks to generate when a file is uploaded which is larger than this
         /// object.
-        #[arg(long, default_value_t = MAX_CHUNK_SIZE, value_parser = clap::value_parser!(u64).range(1<<20..=5<<20))]
+        #[arg(
+            long,
+            default_value_t = MAX_CHUNK_SIZE,
+            value_parser = clap::value_parser!(u64).range(1<<20..=5<<20)
+        )]
         chunk_size: u64,
+
         #[arg(short, long, default_value = DEFAULT_CONFIG_FILE)]
         config: PathBuf,
-        /// Whether to inlcude the passwords for the 0-db namespaces or not. If this is not the
-        /// case, the 0-db namespaces must be PUBLIC for users to be able to download chunks. Note
-        /// that setting this will essentially give everyone who can download the metadata access
-        /// to your passwords.
+
+        /// Whether to include the Hero Redis session token in the metadata (if configured).
+        ///
+        /// If this is false, Hero Redis instances must be publicly readable for downloads to work.
+        ///
+        /// Note: embedding tokens in metadata can grant anyone who can download metadata access to
+        /// the underlying stored shards.
         #[arg(long, default_value_t = false)]
         include_password: bool,
     },
@@ -99,7 +113,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut config_file = File::open(config)?;
             let mut toml_str = String::new();
             config_file.read_to_string(&mut toml_str)?;
-            let config = toml::from_str(&toml_str)?;
+            let config: Config = toml::from_str(&toml_str)?;
+
+            if let Err(msg) = config.validate_for_upload() {
+                eprintln!("Invalid config: {msg}");
+                std::process::exit(1);
+            }
 
             let metas = if ft.is_file() {
                 upload_file(&object, mime, chunk_size, &config, include_password)?
@@ -139,13 +158,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Encrypt, chunk, and upload the chunks
+/// Encrypt, chunk, and upload the chunks/shards (Hero Redis only).
 fn upload_file(
     file_path: &Path,
     mime: Option<String>,
     chunk_size: u64,
     config: &Config,
-    include_passwords: bool,
+    include_secrets_in_meta: bool,
 ) -> Result<Vec<MetaInfo>, Box<dyn std::error::Error>> {
     let Some(name) = file_path.file_name() else {
         return Err("File must have a non-empty name".into());
@@ -153,6 +172,7 @@ fn upload_file(
     let Some(name) = name.to_str() else {
         return Err("File name must be valid UTF-8".into());
     };
+
     let mut file = File::open(file_path)?;
     let mut content = vec![];
     file.read_to_end(&mut content)?;
@@ -166,9 +186,10 @@ fn upload_file(
                 .to_string()
         });
 
-    // Chunk content to size. This must be done now since decryption can only happen at the
-    // beginning, so decrypting a chunk created after encryption would require the whole encrypted
-    // object regardless.
+    let backends = config.shard_backends();
+    let n = backends.len();
+    let k = config.required_shards as usize;
+
     let mut chunks = Vec::with_capacity(content.len().div_ceil(chunk_size as usize));
     for i in 0..chunks.capacity() {
         chunks.push(
@@ -184,65 +205,51 @@ fn upload_file(
     };
 
     for (chunk_idx, chunk) in chunks.into_iter().enumerate() {
+        // Per-chunk encryption key: hash of plaintext chunk
         let chunk_plain_hash = blake3_16_hash(chunk);
         let encryptor = aes_gcm::Aes128Gcm::new((&chunk_plain_hash[..]).into());
         let nonce: [u8; 12] = random();
         let mut ciphertext = encryptor
             .encrypt(&nonce.into(), chunk)
             .map_err(|_| "Encryption failed")?;
+
+        // Key used for storage: hash of encrypted (unpadded) chunk
         let chunk_cipher_hash = blake3_16_hash(&ciphertext);
 
-        // pkcs7 extend data
-        let mut padding = ciphertext.len() % config.required_shards as usize;
-        if padding == 0 {
-            // FIXME: padding could be bigger than 255
-            padding = config.required_shards as usize;
+        // PKCS#7-like padding so ciphertext length is a multiple of k (required_shards).
+        // Padding bytes are value == padding length.
+        let rem = ciphertext.len() % k;
+        let pad_len = if rem == 0 { k } else { k - rem };
+        if pad_len > 255 {
+            return Err(format!(
+                "padding length {pad_len} exceeds 255 (required_shards={k}); reduce required_shards"
+            )
+            .into());
         }
+        ciphertext.extend(std::iter::repeat_n(pad_len as u8, pad_len));
 
-        ciphertext.extend(std::iter::repeat_n(padding as u8, padding));
+        // Reed-Solomon encode into n shards total, with k data shards.
+        let encoder = ReedSolomon::new(k, n - k)?;
 
-        // Now we can do encoding of the chunk into smaller chunks
-        let encoder = ReedSolomon::new(
-            config.required_shards as usize,
-            config.zdbs.len() - config.required_shards as usize,
-        )?;
-
-        // First construct placeholders
-        // We already padded ciphetext so its length is a multiple of required_shards.
-        let shard_size = ciphertext.len() / config.required_shards as usize;
-
+        let shard_size = ciphertext.len() / k;
         let mut shards: Vec<Vec<u8>> = ciphertext.chunks_exact(shard_size).map(Vec::from).collect();
-        shards.extend(vec![
-            vec![0; shard_size];
-            config.zdbs.len() - config.required_shards as usize
-        ]);
+        shards.extend(vec![vec![0; shard_size]; n - k]);
 
         encoder.encode(&mut shards)?;
 
-        for (shard, zdb_config) in shards.iter().zip(&config.zdbs) {
-            let mut zdb = Zdb::new(
-                zdb_config.host,
-                &zdb_config.namespace,
-                zdb_config.secret.as_deref(),
-            )?;
-
-            zdb.set(&chunk_cipher_hash[..], shard)?;
+        // Store each shard in the corresponding backend.
+        for (shard, backend) in shards.iter().zip(backends.iter()) {
+            store_shard(backend, &chunk_cipher_hash[..], shard)?;
         }
 
+        // Build metadata shard locations (optionally stripping auth tokens).
+        let locations = backends
+            .iter()
+            .map(|b| shard_location_for_meta(b, include_secrets_in_meta))
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+
         meta.blocks.push(cdn_meta::Block {
-            shards: config
-                .zdbs
-                .iter()
-                .map(|zdb| cdn_meta::Location {
-                    host: zdb.host,
-                    namespace: zdb.namespace.clone(),
-                    secret: if include_passwords {
-                        zdb.secret.clone()
-                    } else {
-                        None
-                    },
-                })
-                .collect(),
+            shards: locations,
             required_shards: config.required_shards,
             start_offset: chunk_idx as u64 * chunk_size,
             end_offset: ((chunk_idx + 1) as u64 * chunk_size) - 1,
@@ -260,7 +267,7 @@ fn upload_dir(
     dir: &Path,
     chunk_size: u64,
     config: &Config,
-    include_passwords: bool,
+    include_secrets_in_meta: bool,
 ) -> Result<Vec<MetaInfo>, Box<dyn std::error::Error>> {
     if !dir.exists() || !dir.is_dir() {
         return Err(format!("{} must be a path to an existing directory", dir.display()).into());
@@ -282,12 +289,17 @@ fn upload_dir(
     let mut metas = vec![];
 
     for file in std::fs::read_dir(dir)? {
-        // Check for errors when accessing the file metadata.
         let file = file?;
 
         if file.file_type()?.is_file() {
             eprintln!("Upload {}", file.path().display());
-            let mi = upload_file(&file.path(), None, chunk_size, config, include_passwords)?;
+            let mi = upload_file(
+                &file.path(),
+                None,
+                chunk_size,
+                config,
+                include_secrets_in_meta,
+            )?;
             metas.extend(mi.iter().cloned());
             meta.files
                 .extend(mi.into_iter().map(|(_, _, eh, ph)| (eh, Some(ph))));
@@ -303,6 +315,70 @@ fn upload_dir(
     Ok(metas)
 }
 
+fn store_shard(
+    backend: &ShardBackend,
+    key: &[u8],
+    shard: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ShardBackend::HeroRedis { host, db, auth } = backend;
+
+    let client = HeroRedis::connect(*host).map_err(|e| format!("Hero Redis connect: {e}"))?;
+
+    let mut client = match auth {
+        None => {
+            let mut c = client;
+            c.select(*db)
+                .map_err(|e| format!("Hero Redis SELECT {db}: {e}"))?;
+            c
+        }
+        Some(HeroRedisAuth::Token { token }) => client
+            .login_with_token(token, Some(*db))
+            .map_err(|e| format!("Hero Redis token login: {e}"))?,
+        Some(HeroRedisAuth::PrivateKey { private_key }) => {
+            let (c, _token) = client
+                .login_with_private_key_hex(
+                    private_key,
+                    ChallengeFormat::HexDecodedBytes,
+                    Some(*db),
+                )
+                .map_err(|e| format!("Hero Redis private-key login: {e}"))?;
+            c
+        }
+    };
+
+    client
+        .set(key, shard)
+        .map_err(|e| format!("Hero Redis SET failed: {e}"))?;
+
+    Ok(())
+}
+
+fn shard_location_for_meta(
+    backend: &ShardBackend,
+    include_secrets: bool,
+) -> Result<cdn_meta::ShardLocation, Box<dyn std::error::Error>> {
+    let ShardBackend::HeroRedis { host, db, auth } = backend;
+
+    let auth = if !include_secrets {
+        None
+    } else {
+        match auth {
+            None => None,
+            Some(HeroRedisAuth::Token { token }) => {
+                Some(cdn_meta::HeroRedisAuth::Token(token.clone()))
+            }
+            // Never embed private keys in metadata, even if include_secrets=true.
+            Some(HeroRedisAuth::PrivateKey { .. }) => None,
+        }
+    };
+
+    Ok(cdn_meta::ShardLocation {
+        host: *host,
+        db: *db,
+        auth,
+    })
+}
+
 /// Encrypts the binary blob of some metadata and returns the encrypted blob, the hash of the
 /// encrypted data (which is the key it will be stored under), and the hash of the plaintext blob
 /// (which is used as encryption key).
@@ -315,7 +391,10 @@ fn encrypt_meta(meta: &cdn_meta::Metadata) -> Result<MetaInfo, Box<dyn std::erro
     let mut ciphertext = encryptor
         .encrypt(&nonce.into(), content_blob.as_slice())
         .map_err(|_| "Encryption failed")?;
+
+    // Append nonce to ciphertext for metadata decryption.
     ciphertext.extend(&nonce);
+
     let cipher_hash = blake3_16_hash(&ciphertext);
 
     Ok((meta.name(), ciphertext, cipher_hash, content_hash))

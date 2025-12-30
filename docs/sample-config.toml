@@ -1,60 +1,72 @@
-# Sample configuration file for mycdnctl
+# Sample configuration file for mycdnctl (Hero Redis shard storage)
 # Save this as config.toml and modify as needed
+#
+# Each configured backend receives one shard for every encoded block.
+# Reed-Solomon requires:
+#   - required_shards (k) >= 1
+#   - required_shards (k) <= number of backends (n)
+# You can tolerate up to (n - k) backend failures/unavailability.
 
 # Number of shards required to recover the data (minimum)
-# This should be less than the total number of 0-DB instances
 required_shards = 3
 
-# List of 0-DB instances to store shards
-# One shard is sent to each instance in this list
-# Multiple instances provide both redundancy and geo-aware loading
+# List of Hero Redis backends to store shards
+# One shard is sent to each backend in this list.
+#
+# mycdnctl will connect to each host, authenticate (optional), SELECT the db, then SET:
+#   key   = blake3_16(encrypted_chunk_bytes)   (16 bytes, binary)
+#   value = shard bytes                       (binary)
+#
+# Notes on auth:
+# - auth is optional; omit it if your Hero Redis is configured for public read/write.
+# - auth.type = "token" uses `AUTH <token>`
+# - auth.type = "private_key" performs CHALLENGE/TOKEN/AUTH using the private key
+#   (private_key must be 64 hex chars = 32 bytes)
 
 # Region 1: Europe
-[[zdbs]]
-host = "eu-west.0db.example.com:9900"  # IP address and port of the 0-DB instance
-namespace = "mycelium"                 # Namespace to use in the 0-DB
-secret = "password1"                   # Optional password for the namespace
+[[backends]]
+kind = "hero_redis"
+host = "eu-west.hero-redis.example.com:6379"
+db = 7
+# auth = { type = "token", token = "your-session-token" }
+# auth = { type = "private_key", private_key = "64-hex-chars-private-key-goes-here" }
 
 # Region 2: North America
-[[zdbs]]
-host = "us-east.0db.example.com:9900"
-namespace = "mycelium"
-secret = "password2"
+[[backends]]
+kind = "hero_redis"
+host = "us-east.hero-redis.example.com:6379"
+db = 7
 
 # Region 3: Asia
-[[zdbs]]
-host = "asia-east.0db.example.com:9900"
-namespace = "mycelium"
-secret = "password3"
+[[backends]]
+kind = "hero_redis"
+host = "asia-east.hero-redis.example.com:6379"
+db = 7
 
 # Region 4: Australia
-[[zdbs]]
-host = "au-east.0db.example.com:9900"
-namespace = "mycelium"
-secret = "password4"
+[[backends]]
+kind = "hero_redis"
+host = "au-east.hero-redis.example.com:6379"
+db = 7
 
 # Region 5: South America
-[[zdbs]]
-host = "sa-east.0db.example.com:9900"
-namespace = "mycelium"
-secret = "password5"
+[[backends]]
+kind = "hero_redis"
+host = "sa-east.hero-redis.example.com:6379"
+db = 7
 
 # Notes:
-# 1. The total number of 0-DB instances should be greater than required_shards
-#    to provide redundancy. For example, if required_shards = 3 and you have 5
-#    instances, you can lose up to 2 instances and still recover the data.
+# 1. The total number of backends (n) should be greater than required_shards (k)
+#    to provide redundancy. Example: k=3, n=5 => can lose up to 2 backends.
 #
-# 2. Distributing 0-DB instances across different geographic regions enables
-#    geo-aware loading in Mycelium CDN, which improves performance by retrieving
-#    shards from the closest available instances to the user.
+# 2. Distributing Hero Redis instances across regions enables geo-aware shard retrieval
+#    in the wider system (if your downloader/CDN selects nearest backends).
 #
-# 3. Each 0-DB instance should have a unique host address.
+# 3. Use the same db number across backends unless you have a reason to isolate shards.
 #
-# 4. The namespace must exist on each 0-DB instance before uploading.
+# 4. Avoid using --include-password in production unless you explicitly want to embed
+#    auth tokens into metadata. If metadata is public, embedded tokens effectively grant
+#    shard access to anyone who can fetch metadata.
 #
-# 5. If the namespace requires authentication, provide the secret.
-#    If the namespace is public, you can omit the secret or set it to null.
-#
-# 6. When uploading with --include-password, the secrets will be included in
-#    the metadata, which allows clients to access private namespaces. However,
-#    this also means anyone with the metadata can access your 0-DB namespaces.
+# 5. Prefer auth.type="private_key" over embedding tokens in config if you need auth,
+#    but keep in mind you are still storing a credential in the config file.

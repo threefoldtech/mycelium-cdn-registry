@@ -1,10 +1,20 @@
 # Mycelium CDN Registry
 
-The Mycelium CDN Registry is a system for storing and retrieving object metadata in a distributed content delivery network. This repo consists of three main components:
+The Mycelium CDN Registry is a system for storing and retrieving **object metadata** in a distributed content delivery network.
 
-1. **cdn-meta**: A library that defines the metadata format for objects
-2. **mycdnctl**: A command-line tool for uploading objects to the CDN
-3. **registry**: A service for storing and retrieving metadata
+This repo consists of three main components:
+
+1. **`cdn-meta`**: A Rust library that defines the metadata format for objects
+2. **`mycdnctl`**: A command-line tool for uploading objects to the CDN
+3. **`registry`**: A service for storing and retrieving encrypted metadata blobs
+
+## Storage Model (High Level)
+
+- **File content** is split into chunks, encrypted, erasure-coded into shards, and stored in **Hero Redis** instances.
+- **Metadata** (including shard locations) is encrypted and stored in the **Registry** service (PostgreSQL-backed).
+- A **content URL** encodes:
+  - the hash of the encrypted metadata (used as the registry key / subdomain)
+  - the hash of the plaintext metadata (used as the decryption key, via `?key=`)
 
 ## System Architecture
 
@@ -14,29 +24,45 @@ graph TD
     mycdnctl -->|Split & encrypt| Chunks[Encrypted Chunks]
     mycdnctl -->|Create metadata| Meta[Metadata]
     Chunks -->|Erasure coding| Shards[Shards]
-    Shards -->|Distribute| ZDB[0-DB Instances]
+    Shards -->|Store| HeroRedis[Hero Redis Instances]
     Meta -->|Encrypt| EncMeta[Encrypted Metadata]
     EncMeta -->|Store| Registry[Registry Service]
     Registry -->|Store in| PostgreSQL[(PostgreSQL)]
-    
+
     User[End User] -->|Request content| CDN[Mycelium CDN]
     CDN -->|Fetch metadata| Registry
-    CDN -->|Fetch shards| ZDB
-    CDN -->|Geo-aware loading| User
+    CDN -->|Fetch shards| HeroRedis
 ```
 
-## Using mycdnctl
+## Hero Redis
 
-The `mycdnctl` tool is the primary tool needed by users to interract with the mycelium
-CDN. This tool allows you to upload files and directories to the Mycelium CDN. The
-uploaded content is split into chunks, encrypted, and distributed across multiple
-0-DB instances using Reed-Solomon erasure coding for redundancy.
+Shard storage is performed via **Hero Redis**, a Redis-compatible server with an authentication flow based on:
+
+- `CHALLENGE`
+- `TOKEN <pubkey> <signature>`
+- `AUTH <token>`
+- `SELECT <db>`
+
+`mycdnctl` can authenticate to Hero Redis using either:
+
+- a **session token** (stored in config), or
+- an **Ed25519 private key** (stored in config) to perform `CHALLENGE/TOKEN/AUTH` at runtime
+
+## Using `mycdnctl`
+
+`mycdnctl` uploads files and directories by:
+
+1. Reading content
+2. Splitting into chunks (default max: 5 MiB)
+3. Encrypting each chunk with AES-128-GCM (key derived from chunk plaintext hash)
+4. Reed-Solomon erasure coding each encrypted chunk into `n` shards
+5. Writing one shard to each configured Hero Redis backend
+6. Creating + encrypting metadata and uploading it to the registry
+7. Printing a content URL
 
 ### Installation
 
-Either download an artifact for your platform from the latest release, or build from source.
-
-The `mycdnctl` tool is written in Rust and can be built from source:
+Either download a release artifact, or build from source:
 
 ```bash
 cd crates/mycdnctl
@@ -45,39 +71,56 @@ cargo build --release
 
 ### Configuration
 
-Before using `mycdnctl`, you need to create a configuration file (default: `config.toml`) that specifies the 0-DB instances to use for storage. Here's an example configuration:
+Before using `mycdnctl`, create a configuration file (default: `config.toml`) specifying Hero Redis backends used for shard storage.
+
+#### Config Format (`config.toml`)
+
+- `required_shards`: the minimum number of shards needed to reconstruct a chunk
+- `[[backends]]`: list of Hero Redis shard stores; **one shard is written to each backend**
+
+Rules:
+
+- `required_shards >= 1`
+- `required_shards <= number of configured backends`
+
+Example:
 
 ```toml
-# Number of shards required to recover the data (minimum)
+# Minimum shards required to recover (k)
 required_shards = 3
 
-# List of 0-DB instances to store shards
-[[zdbs]]
-host = "192.168.1.1:9900"
-namespace = "mycelium"
-secret = "optional-password"
+# One shard is written to each backend (n = number of backends)
+[[backends]]
+kind = "hero_redis"
+host = "10.0.0.10:6379"
+db = 7
 
-[[zdbs]]
-host = "192.168.1.2:9900"
-namespace = "mycelium"
-secret = "optional-password"
+[[backends]]
+kind = "hero_redis"
+host = "10.0.0.11:6379"
+db = 7
 
-[[zdbs]]
-host = "192.168.1.3:9900"
-namespace = "mycelium"
-secret = "optional-password"
+[[backends]]
+kind = "hero_redis"
+host = "10.0.0.12:6379"
+db = 7
 
-[[zdbs]]
-host = "192.168.1.4:9900"
-namespace = "mycelium"
+# Optional auth:
+# 1) Session token (client uses `AUTH <token>`)
+[[backends]]
+kind = "hero_redis"
+host = "10.0.0.13:6379"
+db = 7
+auth = { type = "token", token = "your-session-token" }
+
+# 2) Ed25519 private key (client performs CHALLENGE/TOKEN/AUTH)
+# Note: private_key must be 64 hex chars (32 bytes).
+[[backends]]
+kind = "hero_redis"
+host = "10.0.0.14:6379"
+db = 7
+auth = { type = "private_key", private_key = "e5f6a7b8... (64 hex chars total)" }
 ```
-
-The configuration specifies:
-- `required_shards`: The minimum number of shards needed to recover the data
-- `zdbs`: A list of 0-DB instances to store the shards, each with:
-  - `host`: The host address and port of the 0-DB instance
-  - `namespace`: The namespace to use in the 0-DB
-  - `secret`: An optional password for the namespace
 
 ### Uploading Files
 
@@ -88,31 +131,51 @@ mycdnctl upload --config config.toml path/to/file.txt
 ```
 
 Optional parameters:
-- `--mime`: Specify the MIME type of the file (otherwise inferred)
-- `--name`: Specify a custom name for the file (otherwise uses the filename)
-- `--chunk-size`: Specify the size of chunks (default: 5 MiB, range: 1-5 MiB)
-- `--include-password`: Include 0-DB namespace passwords in the metadata (not recommended for public content)
-- `--registry`: Specify the registry URL (default: https://cdn.mycelium.grid.tf)
+
+- `--mime`: Specify the MIME type (otherwise inferred)
+- `--name`: Specify a custom name (otherwise uses filename)
+- `--chunk-size`: Chunk size in bytes (default: 5 MiB, range: 1–5 MiB)
+- `--include-password`: Include the Hero Redis **session token** (if configured) in the metadata (not recommended for public content)
+- `--registry`: Specify registry URL (default: `https://cdn.mycelium.grid.tf`)
 
 ### Uploading Directories
 
-To upload a directory to the CDN:
+To upload a directory (non-recursive) to the CDN:
 
 ```bash
 mycdnctl upload --config config.toml path/to/directory
 ```
 
-This will upload all files in the directory (non-recursive) and create a directory metadata object that references all the files.
+Each regular file inside the directory is uploaded as a file object, and then a directory metadata object referencing those files is uploaded.
 
 ### Understanding the Output
 
-After uploading an object, `mycdnctl` will output a URL for accessing the object, which can be used when running mycelium
-locally:
+After uploading, `mycdnctl` prints a URL for accessing the object:
 
-```
-Object path/to/file.txt saved. Url: http://[encrypted-hash].[registry-url]/?key=[plaintext-hash]
+```text
+Object <name> saved. Url: http://[encrypted-hash].[registry-domain]/?key=[plaintext-hash]
 ```
 
-The URL contains:
-- The encrypted hash as a subdomain
-- The plaintext hash as a query parameter, which serves as the decryption key
+Where:
+
+- `[encrypted-hash]` is the hex-encoded Blake3 hash of the **encrypted metadata blob** (used as registry key and subdomain)
+- `[plaintext-hash]` is the hex-encoded Blake3 hash of the **plaintext metadata blob** (used as the decryption key)
+
+## Security Notes
+
+- Encryption keys are content-derived:
+  - Chunk encryption key = Blake3 hash of the plaintext chunk
+  - Metadata encryption key = Blake3 hash of the plaintext metadata blob
+- `--include-password` embeds Hero Redis session tokens into metadata (if configured).
+  - Anyone who can fetch the metadata can use the embedded token to access shard storage.
+  - For public content, prefer configuring Hero Redis for unauthenticated reads and keep `--include-password` off.
+
+## Development
+
+This repository is a Cargo workspace-like layout (multiple crates under `crates/`):
+
+- `crates/cdn-meta`
+- `crates/mycdnctl`
+- `crates/registry`
+
+Build / test individual crates via their crate directories, or use `--manifest-path` from the repo root.

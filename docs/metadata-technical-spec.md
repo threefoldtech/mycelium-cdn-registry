@@ -207,7 +207,7 @@ flowchart LR
     A[Encrypted Block] --> B[Pad to Multiple of required_shards]
     B --> C[Split into Data Shards]
     C --> D[Generate Parity Shards]
-    D --> E[Distribute to 0-DB Instances]
+    D --> E[Distribute to Hero Redis Instances]
     
     F[Retrieve Shards] --> G[Reed-Solomon Decode]
     G --> H[Reconstruct Encrypted Block]
@@ -219,7 +219,7 @@ The system uses the `reed_solomon_erasure` crate with the Galois field GF(2^8). 
 1. The encrypted block is padded to ensure its length is a multiple of `k`
 2. The padded block is split into `k` equal-sized data shards
 3. `n - k` parity shards are generated using Reed-Solomon encoding
-4. Each shard (both data and parity) is uploaded to a different 0-DB instance
+4. Each shard (both data and parity) is uploaded to a different Hero Redis instance
 
 To recover the original data, only `k` out of `n` shards are needed, providing fault tolerance against the loss of up to `n - k` shards.
 
@@ -228,28 +228,29 @@ To recover the original data, only `k` out of `n` shards are needed, providing f
 ```mermaid
 flowchart TD
     subgraph "Storage Components"
-        A[File Content] --> B[0-DB Instances]
+        A[File Content] --> B[Hero Redis Instances]
         C[Metadata] --> D[PostgreSQL Database]
         E[Content URLs] --> F[DNS-based Content Addressing]
     end
     
     subgraph "Geographic Distribution"
-        G[Shards] --> H[0-DB Region 1]
-        G --> I[0-DB Region 2]
-        G --> J[0-DB Region 3]
-        G --> K[0-DB Region 4]
+        G[Shards] --> H[Hero Redis Region 1]
+        G --> I[Hero Redis Region 2]
+        G --> J[Hero Redis Region 3]
+        G --> K[Hero Redis Region 4]
     end
 ```
 
-### 0-DB Storage
+### Hero Redis Storage
 
-The actual file content is stored in 0-DB instances:
+The actual file content is stored in Hero Redis instances:
 
-1. 0-DB is a Redis-compatible key-value store
-2. Each shard is stored under the hash of the encrypted block
-3. The system connects to 0-DB using the Redis protocol
-4. Authentication is handled using the SECURE challenge-response mechanism
-5. Multiple 0-DB instances are used for both redundancy and geo-aware loading in mycelium
+1. Hero Redis is Redis-protocol compatible (works with Redis clients)
+2. Each shard is stored under the hash of the encrypted block (the encrypted block hash is the key)
+3. The system connects using the Redis protocol and stores shards using `SET <key> <bytes>`
+4. Authentication is handled using Hero Redis' Ed25519-based flow (`CHALLENGE` → `TOKEN` → `AUTH <token>`) or a pre-issued session token via `AUTH <token>`
+5. After authentication, the client selects the configured database using `SELECT <db>`
+6. Multiple Hero Redis instances are used for redundancy (erasure coding) and geographic distribution
 
 ### Registry Storage
 
@@ -283,24 +284,24 @@ Where:
 sequenceDiagram
     participant Client
     participant Registry
-    participant ZDB as 0-DB Instances
+    participant HeroRedis as Hero Redis Instances
     
-    Note over Client,ZDB: Upload Process
+    Note over Client,HeroRedis: Upload Process
     Client->>Client: Split file into chunks
     Client->>Client: Hash & encrypt each chunk
     Client->>Client: Generate erasure-coded shards
-    Client->>ZDB: Store shards
+    Client->>HeroRedis: Store shards
     Client->>Client: Create & encrypt metadata
     Client->>Registry: Store encrypted metadata
     Registry->>Client: Return success
     
-    Note over Client,ZDB: Download Process
+    Note over Client,HeroRedis: Download Process
     Client->>Client: Parse URL (extract hashes)
     Client->>Registry: Fetch encrypted metadata
     Registry->>Client: Return encrypted metadata
     Client->>Client: Decrypt metadata
-    Client->>ZDB: Fetch required shards
-    ZDB->>Client: Return shards
+    Client->>HeroRedis: Fetch required shards
+    HeroRedis->>Client: Return shards
     Client->>Client: Reconstruct & decrypt content
 ```
 
@@ -313,7 +314,7 @@ To implement a client for uploading content:
    - Hash the chunk using Blake3
    - Encrypt the chunk using AES-128-GCM with the hash as the key
    - Generate Reed-Solomon shards
-   - Upload each shard to a different 0-DB instance
+   - Upload each shard to a different Hero Redis instance
 3. **Create metadata** and upload to the registry
 
 ### Downloading Content
@@ -323,7 +324,7 @@ To implement a client for downloading content:
 1. **Parse the URL** to extract the encrypted and plaintext hashes
 2. **Retrieve and decrypt the metadata** from the registry
 3. **For each block in the metadata**:
-   - Retrieve shards from 0-DB instances
+   - Retrieve shards from Hero Redis instances
    - Reconstruct and decrypt the block
    - Verify and append to the output file
 4. **Verify the complete file** against the content hash

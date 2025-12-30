@@ -7,7 +7,7 @@ This guide provides detailed instructions for setting up and running the Myceliu
 The Mycelium CDN Registry is a service that:
 - Stores encrypted metadata blobs in a PostgreSQL database
 - Provides an HTTP API for uploading and retrieving metadata
-- Works in conjunction with 0-DB instances that store the actual file content
+- Works in conjunction with Hero Redis instances that store the actual file content (shards)
 
 ```mermaid
 graph TD
@@ -21,7 +21,7 @@ graph TD
     Client -->|Retrieve metadata| API
     
     subgraph "External Components"
-        ZDB[0-DB Instances] -.->|Referenced by| DB
+        HeroRedis[Hero Redis Instances] -.->|Referenced by| DB
         DNS[DNS Wildcard] -->|Resolves to| API
     end
 ```

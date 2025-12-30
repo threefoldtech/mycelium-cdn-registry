@@ -1,120 +1,122 @@
 # Mycelium CDN Registry Documentation
 
-Welcome to the Mycelium CDN Registry documentation. This documentation provides comprehensive information about the Mycelium CDN Registry system, including user guides, administrator guides, and technical specifications.
+This directory contains the documentation for the Mycelium CDN Registry system, including user guides, administrator guides, and technical specifications.
+
+## System Overview
+
+The repository contains three main components:
+
+1. `cdn-meta`: Defines the metadata format (binary encoding + encryption inputs/outputs)
+2. `mycdnctl`: CLI tool that uploads objects by chunking/encrypting/erasure-coding, then storing shards in **Hero Redis**
+3. `registry`: Service for storing and retrieving encrypted metadata blobs (backed by PostgreSQL)
+
+## System Architecture
 
 ```mermaid
 graph TD
-    subgraph "System Components"
-        mycdnctl[mycdnctl CLI] --> Registry[Registry Service]
-        Registry --> PostgreSQL[(PostgreSQL)]
-        mycdnctl --> ZDB[0-DB Instances]
-        Client[Client] --> Registry
-        Client --> ZDB
-    end
+    User[User] -->|Upload file/dir| mycdnctl[mycdnctl CLI]
+    mycdnctl -->|Split & encrypt| Chunks[Encrypted Chunks]
+    Chunks -->|Erasure coding| Shards[Shards]
+    Shards -->|Store| HR[Hero Redis Instances]
+    mycdnctl -->|Create & encrypt metadata| EncMeta[Encrypted Metadata]
+    EncMeta -->|Store| Registry[Registry Service]
+    Registry -->|Store in| PostgreSQL[(PostgreSQL)]
+
+    Client[Client] -->|Fetch metadata| Registry
+    Client -->|Fetch shards| HR
 ```
 
 ## Documentation Overview
 
 ### User Documentation
 
-- [**User Guide: Using mycdnctl**](mycdnctl-user-guide.md) - Detailed instructions on how to use the mycdnctl command-line tool to upload files and directories to the Mycelium CDN. Includes diagrams of the upload workflow, erasure coding process, and security model.
+- [**User Guide: Using mycdnctl**](mycdnctl-user-guide.md) — How to build/configure/use `mycdnctl` to upload files and directories. (Note: some diagrams/text may still mention the old backend; the storage backend is now Hero Redis.)
 
 ### Administrator Documentation
 
-- [**Administrator Guide: Running the Registry**](registry-admin-guide.md) - Instructions for setting up and running the Mycelium CDN Registry service, including database configuration, deployment options, and monitoring. Features diagrams for scaling and architecture.
+- [**Administrator Guide: Running the Registry**](registry-admin-guide.md) — How to deploy and operate the metadata registry service (PostgreSQL-backed).
 
 ### Developer Documentation
 
-- [**Technical Specification: Metadata Format**](metadata-technical-spec.md) - Detailed technical specification of the metadata format, binary encoding, encryption, and storage architecture used in the Mycelium CDN system. Includes class diagrams, flow charts, and sequence diagrams.
+- [**Technical Specification: Metadata Format**](metadata-technical-spec.md) — Details the metadata format, binary encoding, encryption, and erasure coding.
 
 ### Configuration Examples
 
-- [**Sample Configuration**](sample-config.toml) - A sample configuration file for mycdnctl with detailed comments, showing how to configure 0-DB instances across different geographic regions for both redundancy and geo-aware loading.
+- [**Sample Configuration**](sample-config.toml) — Example `config.toml` for `mycdnctl` showing how to configure Hero Redis shard backends.
 
-## System Architecture
+## Data Flow
 
-The Mycelium CDN Registry consists of three main components:
-
-1. **cdn-meta**: A library that defines the metadata format for objects
-2. **mycdnctl**: A command-line tool for uploading objects to the CDN
-3. **registry**: A service for storing and retrieving metadata
-
-### Data Flow
+### Upload Flow
 
 ```mermaid
 sequenceDiagram
     participant User
     participant mycdnctl
+    participant HeroRedis as Hero Redis Instances
     participant Registry
-    participant ZDB as 0-DB Instances
-    
-    User->>mycdnctl: Upload file
+    participant PostgreSQL
+
+    User->>mycdnctl: Upload file/dir
     mycdnctl->>mycdnctl: Split into chunks
     mycdnctl->>mycdnctl: Encrypt chunks
-    mycdnctl->>mycdnctl: Generate erasure-coded shards
-    mycdnctl->>ZDB: Store shards
+    mycdnctl->>mycdnctl: Reed-Solomon encode shards
+    mycdnctl->>HeroRedis: Store shards (SET key shard)
     mycdnctl->>mycdnctl: Create & encrypt metadata
     mycdnctl->>Registry: Store encrypted metadata
+    Registry->>PostgreSQL: Persist blob
     Registry->>mycdnctl: Return success
     mycdnctl->>User: Return content URL
 ```
 
-1. **Upload Process**:
-   - Files are split into chunks
-   - Chunks are encrypted using AES-128-GCM
-   - Encrypted chunks are erasure-coded using Reed-Solomon
-   - Shards are distributed across multiple 0-DB instances in different geographic regions
-   - Metadata is created, encrypted, and stored in the registry
+### Download Flow (High-Level)
 
 ```mermaid
 sequenceDiagram
-    participant User
-    participant CDN as Mycelium CDN
+    participant Client
     participant Registry
-    participant ZDB as 0-DB Instances
-    
-    User->>CDN: Request content (URL with key)
-    CDN->>Registry: Fetch encrypted metadata
-    Registry->>CDN: Return encrypted metadata
-    CDN->>CDN: Decrypt metadata using key
-    CDN->>ZDB: Fetch required shards (geo-aware)
-    ZDB->>CDN: Return shards
-    CDN->>CDN: Reconstruct & decrypt content
-    CDN->>User: Deliver content
-```
+    participant HeroRedis as Hero Redis Instances
 
-2. **Download Process**:
-   - Encrypted metadata is retrieved from the registry
-   - Metadata is decrypted using the provided key
-   - Shards are retrieved from the closest available 0-DB instances (geo-aware loading)
-   - Original file is reconstructed from the shards
+    Client->>Registry: Fetch encrypted metadata
+    Registry->>Client: Return encrypted metadata
+    Client->>Client: Decrypt metadata using key
+    loop For each block
+        Client->>HeroRedis: Fetch required shards (GET key)
+        HeroRedis->>Client: Return shards
+        Client->>Client: Reed-Solomon decode + decrypt block
+    end
+```
 
 ## Quick Start
 
-### Installing mycdnctl
+### Build `mycdnctl`
+
+From the repository root:
 
 ```bash
-cargo build --release -p mycdnctl
+cargo build --release --manifest-path crates/mycdnctl/Cargo.toml
 ```
 
-### Setting Up the Registry
+### Build and run the registry
 
 ```bash
-# Create PostgreSQL database
-createdb mycelium_cdn_registry
-
-# Build and run the registry
-cargo build --release -p registry
-./target/release/registry --db-user mycelium --db-password your-password
+cargo build --release --manifest-path crates/registry/Cargo.toml
+./target/release/registry --help
 ```
 
-### Uploading a File
+### Upload a file
 
 ```bash
-mycdnctl upload --config config.toml path/to/file.txt
+./target/release/mycdnctl upload --config config.toml path/to/file.txt
 ```
 
-## Additional Resources
+## Notes on Hero Redis
 
-- [Main README](../README.md) - Overview of the entire project
-- [GitHub Repository](https://github.com/your-org/mycelium-cdn-registry) - Source code and issue tracking
+Hero Redis is Redis-protocol compatible, but authentication is typically done via:
+
+- `AUTH <token>` (session token), and optionally `SELECT <db>`
+- or an Ed25519-based flow (`CHALLENGE` → `TOKEN` → `AUTH`), depending on how your Hero Redis instance is configured
+
+`mycdnctl` stores shards by using `SET <key> <bytes>` where `<key>` is derived from the encrypted block hash.
+
+---
+If you find any remaining outdated references to the previous shard storage backend in this docs folder, update them to “Hero Redis”.

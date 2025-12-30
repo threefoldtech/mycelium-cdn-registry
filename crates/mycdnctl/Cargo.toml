@@ -11,7 +11,7 @@ rand = "0.9.1"
 redis = "0.32.2"
 reed-solomon-erasure = { version = "6.0.0" }
 serde = { version = "1.0.219", features = ["derive"] }
-sha1 = "0.10.6"
+ed25519-dalek = { version = "2.1.1", optional = true }
 toml = "0.8.23"
 cdn-meta = { path = "../cdn-meta" }
 rayon = "1.10.0"
@@ -25,6 +25,10 @@ reqwest = { version = "0.12.20", default-features = false, features = [
 ] }
 faster-hex = "0.10.0"
 mime_guess = "2.0.5"
+
+[features]
+default = ["hero_redis_ed25519"]
+hero_redis_ed25519 = ["dep:ed25519-dalek"]
 
 [profile.release]
 opt-level = 3
