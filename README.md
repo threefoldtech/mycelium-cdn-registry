@@ -1,19 +1,20 @@
-# Mycelium CDN Registry
+# Mycelium CDN (Hero Redis + Holochain Metadata)
 
-The Mycelium CDN Registry is a system for storing and retrieving **object metadata** in a distributed content delivery network.
+This repository contains tooling and metadata definitions for a distributed content delivery network.
 
-This repo consists of three main components:
+This repo consists of two main components:
 
 1. **`cdn-meta`**: A Rust library that defines the metadata format for objects
 2. **`mycdnctl`**: A command-line tool for uploading objects to the CDN
-3. **`registry`**: A service for storing and retrieving encrypted metadata blobs
+
+Metadata storage is performed via a Holochain hApp (see `holopoc/`) which provides an authorized key-value store.
 
 ## Storage Model (High Level)
 
 - **File content** is split into chunks, encrypted, erasure-coded into shards, and stored in **Hero Redis** instances.
-- **Metadata** (including shard locations) is encrypted and stored in the **Registry** service (PostgreSQL-backed).
-- A **content URL** encodes:
-  - the hash of the encrypted metadata (used as the registry key / subdomain)
+- **Metadata** (including shard locations) is encrypted and stored in **Holochain** using the **HoloKVS** authorized key-value store (`holopoc/`).
+- A **content reference** encodes:
+  - the hash of the encrypted metadata (used as the HoloKVS key)
   - the hash of the plaintext metadata (used as the decryption key, via `?key=`)
 
 ## System Architecture
@@ -26,11 +27,10 @@ graph TD
     Chunks -->|Erasure coding| Shards[Shards]
     Shards -->|Store| HeroRedis[Hero Redis Instances]
     Meta -->|Encrypt| EncMeta[Encrypted Metadata]
-    EncMeta -->|Store| Registry[Registry Service]
-    Registry -->|Store in| PostgreSQL[(PostgreSQL)]
-
+    EncMeta -->|Store| Holochain[Holochain (HoloKVS)]
+    
     User[End User] -->|Request content| CDN[Mycelium CDN]
-    CDN -->|Fetch metadata| Registry
+    CDN -->|Fetch metadata| Holochain
     CDN -->|Fetch shards| HeroRedis
 ```
 
@@ -57,8 +57,8 @@ Shard storage is performed via **Hero Redis**, a Redis-compatible server with an
 3. Encrypting each chunk with AES-128-GCM (key derived from chunk plaintext hash)
 4. Reed-Solomon erasure coding each encrypted chunk into `n` shards
 5. Writing one shard to each configured Hero Redis backend
-6. Creating + encrypting metadata and uploading it to the registry
-7. Printing a content URL
+6. Creating + encrypting metadata and storing it in Holochain (HoloKVS)
+7. Printing a content reference
 
 ### Installation
 
@@ -71,12 +71,16 @@ cargo build --release
 
 ### Configuration
 
-Before using `mycdnctl`, create a configuration file (default: `config.toml`) specifying Hero Redis backends used for shard storage.
+Before using `mycdnctl`, create a configuration file (default: `config.toml`) specifying:
+
+- Hero Redis backends used for shard storage
+- Holochain/HoloKVS connection and signing settings used for metadata storage
 
 #### Config Format (`config.toml`)
 
 - `required_shards`: the minimum number of shards needed to reconstruct a chunk
 - `[[backends]]`: list of Hero Redis shard stores; **one shard is written to each backend**
+- `[metadata]`: metadata storage backend configuration (HoloKVS)
 
 Rules:
 
@@ -105,7 +109,7 @@ kind = "hero_redis"
 host = "10.0.0.12:6379"
 db = 7
 
-# Optional auth:
+# Optional Hero Redis auth:
 # 1) Session token (client uses `AUTH <token>`)
 [[backends]]
 kind = "hero_redis"
@@ -120,6 +124,32 @@ kind = "hero_redis"
 host = "10.0.0.14:6379"
 db = 7
 auth = { type = "private_key", private_key = "e5f6a7b8... (64 hex chars total)" }
+
+# Metadata storage (Holochain / HoloKVS via holokvs CLI)
+#
+# NOTE: This is a single TOML table. The config is NOT nested under `[metadata.holo_kvs]`.
+[metadata]
+kind = "holo_kvs"
+
+# Path to holokvs binary (resolve via PATH if "holokvs", or provide a path)
+bin = "holokvs"
+
+# Conductor admin/app websocket settings (match holopoc/cli flags)
+host = "127.0.0.1"
+admin_port = 8888
+# app_port = 12345        # optional; if omitted holokvs will obtain/attach
+
+# Installed app ID to connect to
+app_id = "kv_store"
+
+# Optional key prefix to namespace metadata keys in the DHT
+key_prefix = "mycelium-cdn/meta/"
+
+# Encrypted metadata bytes are always stored as a hex-encoded string value.
+
+
+# Required for writes: X25519 secret key (32 bytes hex / 64 hex chars; optional 0x prefix)
+writer_x25519_sk_hex = "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 ```
 
 ### Uploading Files
@@ -136,7 +166,6 @@ Optional parameters:
 - `--name`: Specify a custom name (otherwise uses filename)
 - `--chunk-size`: Chunk size in bytes (default: 5 MiB, range: 1–5 MiB)
 - `--include-password`: Include the Hero Redis **session token** (if configured) in the metadata (not recommended for public content)
-- `--registry`: Specify registry URL (default: `https://cdn.mycelium.grid.tf`)
 
 ### Uploading Directories
 
@@ -150,15 +179,15 @@ Each regular file inside the directory is uploaded as a file object, and then a 
 
 ### Understanding the Output
 
-After uploading, `mycdnctl` prints a URL for accessing the object:
+After uploading, `mycdnctl` prints a content reference for accessing the object:
 
 ```text
-Object <name> saved. Url: http://[encrypted-hash].[registry-domain]/?key=[plaintext-hash]
+Object <name> saved. Ref: holo://[encrypted-hash]?key=[plaintext-hash]
 ```
 
 Where:
 
-- `[encrypted-hash]` is the hex-encoded Blake3 hash of the **encrypted metadata blob** (used as registry key and subdomain)
+- `[encrypted-hash]` is the hex-encoded Blake3 hash of the **encrypted metadata blob** (used as the HoloKVS key, optionally namespaced by `metadata.key_prefix`)
 - `[plaintext-hash]` is the hex-encoded Blake3 hash of the **plaintext metadata blob** (used as the decryption key)
 
 ## Security Notes

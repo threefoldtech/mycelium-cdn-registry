@@ -8,28 +8,27 @@ use aes_gcm::{KeyInit, aead::Aead};
 use clap::{Parser, Subcommand};
 use rand::random;
 use reed_solomon_erasure::galois_8::ReedSolomon;
-use reqwest::Url;
 
 use crate::{
-    config::{Config, HeroRedisAuth, ShardBackend},
+    config::{Config, HeroRedisAuth, MetadataStorage, ShardBackend},
     hero_redis::{ChallengeFormat, HeroRedis},
+    holokvs::{HoloKvsClient, HoloKvsConfig},
 };
 
 /// Module for config file
 mod config;
 /// Module to work with Hero Redis backend
 mod hero_redis;
+/// Module to store metadata via HoloKVS (Holochain) using holokvs CLI
+mod holokvs;
 
 /// The maximum unencrypted size of one chunk of content
 const MAX_CHUNK_SIZE: u64 = 5 << 20; // 5 MiB
 /// The default configuration file path
 const DEFAULT_CONFIG_FILE: &str = "config.toml";
 
-/// The default URL of the registry used to upload data.
-const DEFAULT_MYCELIUM_CDN_REGISTRY: &str = "https://cdn.mycelium.grid.tf";
-
-/// Name, Encrypted binary metadata, hash of the encrypted content, and hash of the plaintext content
-/// (which is the encryption key)
+/// Name, Encrypted binary metadata, hash of the encrypted metadata, and hash of the plaintext metadata
+/// (which is the decryption key)
 type MetaInfo = (String, Vec<u8>, [u8; 16], [u8; 16]);
 
 #[derive(Parser)]
@@ -37,15 +36,13 @@ type MetaInfo = (String, Vec<u8>, [u8; 16], [u8; 16]);
 struct Args {
     #[command(subcommand)]
     command: Command,
-    #[arg(short, long, default_value = DEFAULT_MYCELIUM_CDN_REGISTRY)]
-    registry: Url,
 }
 
 #[derive(Clone, Subcommand)]
 /// Available commands to manage mycelium cdn objects.
 enum Command {
-    /// Upload an object (file or directory) to Hero Redis shard backends and save the metadata in
-    /// the mycelium cdn registry.
+    /// Upload an object (file or directory) to Hero Redis shard backends and store the encrypted
+    /// metadata blob in Holochain (HoloKVS).
     Upload {
         /// The object to upload, this must be either a file or directory
         object: PathBuf,
@@ -76,7 +73,7 @@ enum Command {
         ///
         /// If this is false, Hero Redis instances must be publicly readable for downloads to work.
         ///
-        /// Note: embedding tokens in metadata can grant anyone who can download metadata access to
+        /// Note: embedding tokens in metadata can grant anyone who can obtain metadata access to
         /// the underlying stored shards.
         #[arg(long, default_value_t = false)]
         include_password: bool,
@@ -110,6 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("Config file does not exist");
                 std::process::exit(1);
             }
+
             let mut config_file = File::open(config)?;
             let mut toml_str = String::new();
             config_file.read_to_string(&mut toml_str)?;
@@ -120,42 +118,81 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
 
+            let meta_store = build_meta_store(&config)?;
+
             let metas = if ft.is_file() {
                 upload_file(&object, mime, chunk_size, &config, include_password)?
             } else {
                 upload_dir(&object, chunk_size, &config, include_password)?
             };
 
-            let client = reqwest::blocking::Client::new();
             for (name, encrypted_blob, encrypted_hash, plaintext_hash) in metas {
-                let part = reqwest::blocking::multipart::Part::bytes(encrypted_blob);
-                let form = reqwest::blocking::multipart::Form::new().part("data", part);
-                let mut url = args.registry.clone();
-                url.set_path("/api/v1/metadata");
-                client.post(url.clone()).multipart(form).send()?;
+                // Store encrypted metadata in HoloKVS (Holochain).
+                // The client wrapper implements an idempotent put (it will skip the write if the
+                // key already exists with identical bytes).
+                meta_store
+                    .put_metadata(&encrypted_hash, &encrypted_blob)
+                    .map_err(|e| {
+                        format!(
+                            "Failed to store metadata in HoloKVS (key={}): {e}",
+                            faster_hex::hex_string(&encrypted_hash)
+                        )
+                    })?;
 
-                url.set_query(Some(&format!(
-                    "key={}",
-                    faster_hex::hex_string(&plaintext_hash)
-                )));
-
-                let host = format!(
-                    "{}.{}",
-                    faster_hex::hex_string(&encrypted_hash),
-                    url.host_str().expect("Registry URL has a host")
+                // Print a self-contained reference which includes:
+                // - the encrypted metadata key (lookup key)
+                // - the plaintext hash used for decryption
+                //
+                // Note: if you configure a `key_prefix` for HoloKVS storage, it affects the lookup
+                // key in the DHT. We include it in the reference as a hint for downloaders.
+                let ref_str = format_metadata_ref(
+                    &encrypted_hash,
+                    &plaintext_hash,
+                    meta_store.cfg().key_prefix.as_deref(),
                 );
-                url.set_host(Some(&host))?;
 
-                url.set_path("/");
-                url.set_scheme("http")
-                    .map_err(|_| "Could not set scheme to http")?;
-
-                println!("Object {name} saved. Url: {url}");
+                println!("Object {name} saved. Ref: {ref_str}");
             }
         }
     }
 
     Ok(())
+}
+
+fn build_meta_store(config: &Config) -> Result<HoloKvsClient, Box<dyn std::error::Error>> {
+    match &config.metadata {
+        MetadataStorage::HoloKvs(h) => Ok(HoloKvsClient::new(HoloKvsConfig {
+            holokvs_path: h.bin.clone(),
+            host: h.host.clone(),
+            admin_port: h.admin_port,
+            app_port: h.app_port,
+            app_id: h.app_id.clone(),
+            key_prefix: h.key_prefix.clone(),
+            x25519_sk_hex: h.writer_x25519_sk_hex.clone(),
+        })),
+    }
+}
+
+fn format_metadata_ref(
+    encrypted_hash: &[u8; 16],
+    plaintext_hash: &[u8; 16],
+    key_prefix: Option<&str>,
+) -> String {
+    let eh = faster_hex::hex_string(encrypted_hash);
+    let ph = faster_hex::hex_string(plaintext_hash);
+
+    // A lightweight, scheme-only reference. Consumers are expected to:
+    // - resolve metadata from HoloKVS using key (and optional prefix)
+    // - decrypt metadata using `key` query parameter
+    let mut out = format!("holo://{eh}?key={ph}");
+    if let Some(prefix) = key_prefix {
+        if !prefix.is_empty() {
+            // NOTE: We do not URL-encode here. Keep prefixes URL-safe (e.g. "mycelium-cdn/meta/").
+            out.push_str("&prefix=");
+            out.push_str(prefix);
+        }
+    }
+    out
 }
 
 /// Encrypt, chunk, and upload the chunks/shards (Hero Redis only).
@@ -186,10 +223,11 @@ fn upload_file(
                 .to_string()
         });
 
-    let backends = config.shard_backends();
+    let backends = &config.backends;
     let n = backends.len();
     let k = config.required_shards as usize;
 
+    // Chunk content now since decryption can only happen at the beginning.
     let mut chunks = Vec::with_capacity(content.len().div_ceil(chunk_size as usize));
     for i in 0..chunks.capacity() {
         chunks.push(
@@ -213,7 +251,7 @@ fn upload_file(
             .encrypt(&nonce.into(), chunk)
             .map_err(|_| "Encryption failed")?;
 
-        // Key used for storage: hash of encrypted (unpadded) chunk
+        // Key used for shard storage: hash of encrypted (unpadded) chunk
         let chunk_cipher_hash = blake3_16_hash(&ciphertext);
 
         // PKCS#7-like padding so ciphertext length is a multiple of k (required_shards).
@@ -278,7 +316,7 @@ fn upload_dir(
     };
 
     let Some(name) = name.to_str() else {
-        return Err("File name must be valid UTF-8".into());
+        return Err("Directory name must be valid UTF-8".into());
     };
 
     let mut meta = cdn_meta::Directory {

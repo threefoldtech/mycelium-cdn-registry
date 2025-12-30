@@ -10,6 +10,39 @@
 # Number of shards required to recover the data (minimum)
 required_shards = 3
 
+# Metadata storage (Holochain / HoloKVS)
+#
+# mycdnctl stores the encrypted metadata blob into Holochain using the `holokvs` CLI
+# (see `holopoc/cli`). The value is stored as a STRING, so binary metadata is encoded
+# (hex).
+#
+# The metadata entry is content-addressed:
+# - key: lowercase hex of the 16-byte encrypted metadata hash
+# - value: encoded encrypted metadata bytes (nonce already appended)
+[metadata]
+kind = "holo_kvs"
+
+# Path to the `holokvs` CLI binary:
+# - "holokvs" will be resolved via $PATH
+# - or point at a built binary, e.g. "../holopoc/cli/target/release/holokvs"
+bin = "holokvs"
+
+# Holochain admin/app websocket host + ports
+host = "127.0.0.1"
+admin_port = 8888
+# app_port = 0  # optional; if omitted holokvs will obtain/attach an app interface via admin
+
+# Installed app ID to connect to (holopoc default: "kv_store")
+app_id = "kv_store"
+
+# Optional key prefix to namespace metadata keys in the global key space
+# key_prefix = "mycelium-cdn/meta/"
+
+# Encrypted metadata bytes are stored as hex strings (fixed; not configurable).
+
+# X25519 private key (32 bytes hex = 64 hex chars; optional "0x" prefix) used to sign writes
+writer_x25519_sk_hex = "0x0000000000000000000000000000000000000000000000000000000000000000"
+
 # List of Hero Redis backends to store shards
 # One shard is sent to each backend in this list.
 #
