@@ -12,28 +12,27 @@ required_shards = 3
 
 # Metadata storage (Holochain / HoloKVS)
 #
-# mycdnctl stores the encrypted metadata blob into Holochain using the `holokvs` CLI
-# (see `holopoc/cli`). The value is stored as a STRING, so binary metadata is encoded
-# (hex).
+# mycdnctl stores the encrypted metadata blob into Holochain by connecting directly to the
+# conductor's admin/app websockets (no external `holokvs` binary required).
 #
 # The metadata entry is content-addressed:
 # - key: lowercase hex of the 16-byte encrypted metadata hash
-# - value: encoded encrypted metadata bytes (nonce already appended)
+# - value: hex-encoded encrypted metadata bytes (nonce already appended)
 [metadata]
 kind = "holo_kvs"
-
-# Path to the `holokvs` CLI binary:
-# - "holokvs" will be resolved via $PATH
-# - or point at a built binary, e.g. "../holopoc/cli/target/release/holokvs"
-bin = "holokvs"
 
 # Holochain admin/app websocket host + ports
 host = "127.0.0.1"
 admin_port = 8888
-# app_port = 0  # optional; if omitted holokvs will obtain/attach an app interface via admin
+# app_port = 0  # optional; if omitted mycdnctl will obtain/attach an app interface via admin
 
 # Installed app ID to connect to (holopoc default: "kv_store")
 app_id = "kv_store"
+
+# Coordinator zome name (holopoc default: "kv_store")
+zome_name = "kv_store"
+
+# Zome function names are hardcoded in mycdnctl (holopoc defaults).
 
 # Optional key prefix to namespace metadata keys in the global key space
 # key_prefix = "mycelium-cdn/meta/"

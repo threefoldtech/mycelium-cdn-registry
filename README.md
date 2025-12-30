@@ -125,22 +125,25 @@ host = "10.0.0.14:6379"
 db = 7
 auth = { type = "private_key", private_key = "e5f6a7b8... (64 hex chars total)" }
 
-# Metadata storage (Holochain / HoloKVS via holokvs CLI)
+# Metadata storage (Holochain / HoloKVS)
 #
 # NOTE: This is a single TOML table. The config is NOT nested under `[metadata.holo_kvs]`.
 [metadata]
 kind = "holo_kvs"
 
-# Path to holokvs binary (resolve via PATH if "holokvs", or provide a path)
-bin = "holokvs"
-
-# Conductor admin/app websocket settings (match holopoc/cli flags)
+# Conductor admin/app websocket settings
 host = "127.0.0.1"
 admin_port = 8888
-# app_port = 12345        # optional; if omitted holokvs will obtain/attach
+# app_port = 12345        # optional; if omitted mycdnctl will obtain/attach an app interface via admin
 
-# Installed app ID to connect to
+# Installed app ID + coordinator zome name (holopoc defaults)
 app_id = "kv_store"
+zome_name = "kv_store"
+
+# Zome function names are hardcoded in mycdnctl (holopoc defaults):
+# - get_next_nonce
+# - get_state
+# - set_value
 
 # Optional key prefix to namespace metadata keys in the DHT
 key_prefix = "mycelium-cdn/meta/"

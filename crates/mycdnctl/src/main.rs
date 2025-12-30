@@ -12,7 +12,7 @@ use reed_solomon_erasure::galois_8::ReedSolomon;
 use crate::{
     config::{Config, HeroRedisAuth, MetadataStorage, ShardBackend},
     hero_redis::{ChallengeFormat, HeroRedis},
-    holokvs::{HoloKvsClient, HoloKvsConfig},
+    holokvs::HoloKvsClient,
 };
 
 /// Module for config file
@@ -161,15 +161,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn build_meta_store(config: &Config) -> Result<HoloKvsClient, Box<dyn std::error::Error>> {
     match &config.metadata {
-        MetadataStorage::HoloKvs(h) => Ok(HoloKvsClient::new(HoloKvsConfig {
-            holokvs_path: h.bin.clone(),
-            host: h.host.clone(),
-            admin_port: h.admin_port,
-            app_port: h.app_port,
-            app_id: h.app_id.clone(),
-            key_prefix: h.key_prefix.clone(),
-            x25519_sk_hex: h.writer_x25519_sk_hex.clone(),
-        })),
+        MetadataStorage::HoloKvs(h) => Ok(HoloKvsClient::new(h.clone())),
     }
 }
 
