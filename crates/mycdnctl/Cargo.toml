@@ -27,7 +27,7 @@ holochain_client = "0.8.0"
 holo_hash = { version = "0.6", features = ["encoding"] }
 
 # VXEdDSA signing (Signal spec) using only X25519 keys (from holopoc; treat as read-only upstream)
-vxeddsa_support = { path = "../../holopoc/vxeddsa_support", default-features = false, features = ["sign"] }
+vxeddsa_support = { path = "../vxeddsa_support", default-features = false, features = ["sign"] }
 
 [features]
 default = ["hero_redis_ed25519"]

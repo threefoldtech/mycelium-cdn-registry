@@ -1,0 +1,35 @@
+[package]
+name = "vxeddsa_support"
+version = "0.1.0"
+edition = "2021"
+description = "WASM-friendly VXEdDSA (Signal spec) support crate with feature-gated signing and canonical sign-bit=1 Montgomery->Edwards conversion"
+license = "MIT"
+repository = "https://signal.org/docs/specifications/xeddsa/#vxeddsa"
+
+[lib]
+name = "vxeddsa_support"
+path = "src/lib.rs"
+
+[features]
+# Keep the default build WASM-friendly: verification only (no RNG / getrandom dependency).
+default = ["verify"]
+
+# Verification is always available; this feature is a marker (useful for downstream feature wiring).
+verify = []
+
+# Enable signing helpers (requires RNG). Downstream (e.g. CLI) can enable this,
+# while WASM targets (integrity zome) should not.
+sign = ["dep:rand_core", "rand_core/getrandom"]
+
+[dependencies]
+curve25519-dalek = { version = "4.1.3", features = ["digest"] }
+sha2 = "0.10.9"
+subtle = "2.6.1"
+
+# Optional RNG dependency for signing-only helpers.
+rand_core = { version = "0.6.4", optional = true, default-features = false, features = ["getrandom"] }
+
+[dev-dependencies]
+# Tests may want RNG; keep it separate from normal deps.
+rand_core = { version = "0.6.4", default-features = false, features = ["getrandom"] }
+hex = "0.4"
